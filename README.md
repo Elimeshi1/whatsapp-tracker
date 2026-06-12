@@ -1,25 +1,26 @@
 # WhatsApp Beta Tracker
 
 Automatically watches the **WhatsApp beta** builds for **Android** and **macOS**,
-extracts their texts and feature toggles, and reports what changed between
-versions — so you can see what's new before it ships.
+extracts their UI texts, and reports which texts are **new** or **removed**
+between versions — so you can see what's coming before it ships.
 
 It runs entirely on **GitHub Actions** (no server needed) on a schedule, and
 pushes a clean, formatted notification to **Telegram and/or email** whenever
-something changes — showing exactly what was added, changed, or removed, with
-the full report attached.
+something changes — the new/removed texts laid out inline and readable.
 
 ## What it tracks
 
 | Platform | Source | Extracted |
 |----------|--------|-----------|
-| Android  | WhatsApp's self-hosted APK (or a manual APK URL you pass in) | `strings.xml`, `bools.xml`, `integers.xml` |
-| macOS    | Official beta endpoint `?configuration=Beta` → `.dmg` | every English/Base `*.strings` and `*.loctable` |
+| Android  | WhatsApp's self-hosted APK (or a manual APK URL you pass in) | the set of human-readable `strings.xml` values |
+| macOS    | Official beta endpoint `?configuration=Beta` → `.dmg` | string values from English/Base `*.strings` and `*.loctable` |
 
-- **Texts** are the UI strings — new features almost always introduce new strings.
-- **Feature toggles** (`bools`) and **tunables** (`integers`) are the gates that
-  flip new behaviour on. Together these are the same signals trackers like
-  WABetaInfo watch.
+**Why values, not keys?** WhatsApp strips resource *names* (apktool shows them as
+`APKTOOL_DUMMYVAL_0x…`) and the numeric ids are reassigned every build, so
+diffing by name is meaningless — every string looks "changed". Instead we diff
+the **set of string values**: a value present in the new build but not the old
+one is new UI text — a hint at a new feature. This is the same signal trackers
+like WABetaInfo watch.
 
 ## How it works
 
@@ -41,7 +42,7 @@ against it. Git history therefore doubles as a full version-by-version archive.
 ## Output
 
 - **`reports/<platform>/<date>_v<version>.md`** — the organized "what's new":
-  Added / Changed / Removed texts and flags.
+  the new and removed texts for that version.
 - **`CHANGELOG.md`** — one line per run, newest first.
 - **`data/<platform>/latest.json`** — current baseline.
 - **`data/<platform>/snapshots/<version>.json`** — per-version archive.
@@ -75,11 +76,13 @@ repo but sends nothing.
    - `TELEGRAM_BOT_TOKEN` = the bot token
    - `TELEGRAM_CHAT_ID` = your chat id
 
-You'll get one message per changed platform with the diff, plus the full report
-attached as a Markdown file. Messages use Telegram's **MarkdownV2** with
-**collapsible (expandable) blockquotes** — the per-section details stay tucked
-away and expand with one tap. The bot must be an admin of the target channel to
-post (for a private DM, use your own user id as `TELEGRAM_CHAT_ID`).
+You'll get one message per changed platform. Messages use Telegram's
+**Rich Messages** (`sendRichMessage`, Bot API 10.1) — an HTML document with a
+heading, a divider, and **collapsible `<details>` sections** for the new and
+removed texts, so the whole diff is inline and readable (no file). If
+`sendRichMessage` is ever unavailable it falls back to a plain `sendMessage`.
+The bot must be an admin of the target channel to post (for a private DM, use
+your own user id as `TELEGRAM_CHAT_ID`).
 
 ### Email (Gmail)
 

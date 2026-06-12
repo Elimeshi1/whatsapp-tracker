@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Compare freshly extracted data against the committed baseline and write reports.
+"""Compare freshly extracted string values against the baseline and write reports.
 
-For each platform present under ./incoming, this:
-  - diffs strings / bools / integers against data/<platform>/latest.json
+WhatsApp strips resource names, so we diff the *set of string values*: a value in
+the new build but not the old one is new UI text (a new-feature hint); a value
+that disappeared was removed. There is no reliable "changed" concept without
+stable keys, so we report Added and Removed only.
+
+For each platform present under ./incoming this:
+  - diffs values against data/<platform>/latest.json
   - writes a Markdown report under reports/<platform>/ when something changed
   - updates the baseline (data/<platform>/latest.json) and a version snapshot
   - appends a one-line entry to CHANGELOG.md
-  - emits GitHub Actions outputs:  changed=true|false  and  summary=<text>
+  - emits a notify.json payload + GitHub Actions outputs (changed, summary)
 
-Designed to run from the repo root inside the GitHub Actions "report" job.
+Runs from the repo root inside the GitHub Actions "report" job.
 """
 import json
 import os
@@ -22,13 +27,6 @@ DATA = ROOT / "data"
 REPORTS = ROOT / "reports"
 CHANGELOG = ROOT / "CHANGELOG.md"
 
-# Which dict-sections each platform contributes, in display order.
-SECTIONS = {
-    "android": [("strings", "Texts (strings)"), ("bools", "Feature toggles (bools)"),
-                ("integers", "Tunables (integers)")],
-    "mac": [("strings", "Texts (strings)")],
-}
-
 
 def load_json(path: Path):
     if not path.exists():
@@ -40,71 +38,60 @@ def load_json(path: Path):
         return None
 
 
-def diff_maps(old: dict, new: dict):
-    """Return (added, removed, changed) for two {key: value} maps."""
-    old = old or {}
-    new = new or {}
-    old_keys, new_keys = set(old), set(new)
-    added = {k: new[k] for k in sorted(new_keys - old_keys)}
-    removed = {k: old[k] for k in sorted(old_keys - new_keys)}
-    changed = {k: (old[k], new[k]) for k in sorted(old_keys & new_keys) if old[k] != new[k]}
-    return added, removed, changed
+def as_values(strings) -> set:
+    """Normalize a `strings` field to a set of values.
+
+    Accepts the current list format, the legacy {name: value} dict format (older
+    committed baselines), or None.
+    """
+    if isinstance(strings, dict):
+        return {v for v in strings.values() if v}
+    if isinstance(strings, list):
+        return set(strings)
+    return set()
 
 
-def fmt_val(v: str, limit: int = 300) -> str:
+def version_extra(platform: str, data: dict) -> str:
+    if platform == "android" and data.get("versionCode"):
+        return f"versionCode {data['versionCode']}"
+    if platform == "mac" and data.get("build"):
+        return f"build {data['build']}"
+    return ""
+
+
+def fmt_val(v: str, limit: int = 400) -> str:
     v = (v or "").replace("\n", "\\n")
     return v if len(v) <= limit else v[:limit] + " …"
 
 
-def version_extra(platform: str, new_data: dict) -> str:
-    """Human label for the secondary version id (versionCode / build)."""
-    if platform == "android" and new_data.get("versionCode"):
-        return f"versionCode {new_data['versionCode']}"
-    if platform == "mac" and new_data.get("build"):
-        return f"build {new_data['build']}"
-    return ""
-
-
-def render_report(platform: str, new_data: dict, diffs: dict, initial: bool) -> str:
-    version = new_data.get("version")
+def render_report(platform: str, new_data: dict, added, removed, prev_version, initial: bool) -> str:
     ve = version_extra(platform, new_data)
     extra = f" ({ve})" if ve else ""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    title = f"# WhatsApp {platform.capitalize()} beta — v{new_data.get('version')}{extra}"
+    lines = [title, ""]
+    if prev_version and not initial:
+        lines.append(f"_Compared against v{prev_version} · generated {now}_")
+    else:
+        lines.append(f"_Generated {now}_")
+    lines.append("")
 
-    lines = [f"# WhatsApp {platform.capitalize()} beta — v{version}{extra}", "", f"_Generated {now}_", ""]
     if initial:
-        lines += ["> Initial baseline captured. Future runs will diff against this.", ""]
-        for key, title in SECTIONS[platform]:
-            lines.append(f"- **{title}:** {len(new_data.get(key, {}))} entries")
+        lines.append(f"> Initial baseline captured: {len(as_values(new_data.get('strings')))} text values. "
+                     "Future runs will diff against this.")
         lines.append("")
         return "\n".join(lines)
 
-    for key, title in SECTIONS[platform]:
-        added, removed, changed = diffs[key]
-        if not (added or removed or changed):
-            continue
-        lines.append(f"## {title}")
+    if added:
+        lines.append(f"## ➕ New texts ({len(added)})")
         lines.append("")
-        if added:
-            lines.append(f"### ➕ Added ({len(added)})")
-            lines.append("")
-            for k, v in added.items():
-                lines.append(f"- `{k}` = {fmt_val(v)}")
-            lines.append("")
-        if changed:
-            lines.append(f"### ✏️ Changed ({len(changed)})")
-            lines.append("")
-            for k, (old, new) in changed.items():
-                lines.append(f"- `{k}`")
-                lines.append(f"  - before: {fmt_val(old)}")
-                lines.append(f"  - after:  {fmt_val(new)}")
-            lines.append("")
-        if removed:
-            lines.append(f"### ➖ Removed ({len(removed)})")
-            lines.append("")
-            for k, v in removed.items():
-                lines.append(f"- `{k}` = {fmt_val(v)}")
-            lines.append("")
+        lines += [f"- {fmt_val(v)}" for v in added]
+        lines.append("")
+    if removed:
+        lines.append(f"## ➖ Removed texts ({len(removed)})")
+        lines.append("")
+        lines += [f"- {fmt_val(v)}" for v in removed]
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -117,76 +104,55 @@ def process_platform(platform: str, extract_path: Path):
     baseline_path = DATA / platform / "latest.json"
     old_data = load_json(baseline_path)
     initial = old_data is None
+    prev_version = (old_data or {}).get("version")
 
-    diffs = {}
-    total_changes = 0
-    for key, _ in SECTIONS[platform]:
-        added, removed, changed = diff_maps((old_data or {}).get(key), new_data.get(key))
-        diffs[key] = (added, removed, changed)
-        total_changes += len(added) + len(removed) + len(changed)
+    old_set = as_values((old_data or {}).get("strings"))
+    new_set = as_values(new_data.get("strings"))
+    added = sorted(new_set - old_set)
+    removed = sorted(old_set - new_set)
 
     version = new_data.get("version") or "unknown"
-    has_changes = initial or total_changes > 0
+    has_changes = initial or bool(added) or bool(removed)
 
     if not has_changes:
         print(f"== {platform} v{version}: no changes")
-        # Still refresh baseline (e.g. version bump with identical content).
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        baseline_path.write_text(json.dumps(new_data, ensure_ascii=False, indent=2, sort_keys=True),
-                                 encoding="utf-8")
+        baseline_path.write_text(json.dumps(new_data, ensure_ascii=False, indent=2), encoding="utf-8")
         return None
 
-    # Write report.
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    safe_ver = str(version).replace("/", "_")
     report_dir = REPORTS / platform
     report_dir.mkdir(parents=True, exist_ok=True)
-    safe_ver = str(version).replace("/", "_")
     report_path = report_dir / f"{date}_v{safe_ver}.md"
-    report_path.write_text(render_report(platform, new_data, diffs, initial), encoding="utf-8")
+    report_path.write_text(
+        render_report(platform, new_data, added, removed, prev_version, initial), encoding="utf-8")
     report_rel = report_path.relative_to(ROOT).as_posix()
-    print(f"== {platform} v{version}: wrote {report_rel}")
+    print(f"== {platform} v{version}: +{len(added)} / -{len(removed)} → {report_rel}")
 
-    # Update baseline + keep a version snapshot.
+    # Update baseline + version snapshot.
     baseline_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(new_data, ensure_ascii=False, indent=2, sort_keys=True)
+    payload = json.dumps(new_data, ensure_ascii=False, indent=2)
     baseline_path.write_text(payload, encoding="utf-8")
     snap_dir = DATA / platform / "snapshots"
     snap_dir.mkdir(parents=True, exist_ok=True)
     (snap_dir / f"{safe_ver}.json").write_text(payload, encoding="utf-8")
 
-    # Build a compact summary.
     if initial:
-        summary = f"{platform} v{version}: initial baseline"
+        summary = f"{platform} v{version}: initial baseline ({len(new_set)} texts)"
     else:
-        parts = []
-        for key, title in SECTIONS[platform]:
-            a, r, c = diffs[key]
-            if a or r or c:
-                parts.append(f"{title.split(' (')[0].lower()} +{len(a)}/~{len(c)}/-{len(r)}")
-        summary = f"{platform} v{version}: " + ", ".join(parts)
-
-    # Structured sections so the notifier can render rich output per channel.
-    sections = []
-    for key, title in SECTIONS[platform]:
-        added, removed, changed = diffs[key]
-        if not (added or removed or changed):
-            continue
-        sections.append({
-            "title": title,
-            "added": added,
-            "changed": {k: list(v) for k, v in changed.items()},
-            "removed": removed,
-        })
-
+        summary = f"{platform} v{version}: +{len(added)} / -{len(removed)} texts"
     return {
         "platform": platform,
         "version": version,
+        "prev_version": prev_version,
         "version_extra": version_extra(platform, new_data),
         "summary": summary,
         "report": report_rel,
         "initial": initial,
-        "counts": {key: len(new_data.get(key, {})) for key, _ in SECTIONS[platform]},
-        "sections": sections,
+        "counts": {"texts": len(new_set)},
+        "added": added,
+        "removed": removed,
     }
 
 
@@ -194,7 +160,6 @@ def append_changelog(results):
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     bullets = [f"- {r['summary']} — [report]({r['report']})" for r in results]
     new_block = f"## {date}\n\n" + "\n".join(bullets) + "\n\n"
-
     title = "# Changelog\n"
     existing = CHANGELOG.read_text(encoding="utf-8") if CHANGELOG.exists() else title + "\n"
     body = existing[len(title):].lstrip("\n") if existing.startswith(title) else existing
@@ -206,13 +171,16 @@ def set_output(name: str, value: str):
     if not out:
         print(f"(local) {name}={value}")
         return
-    # Multi-line safe.
     with open(out, "a", encoding="utf-8") as fh:
         delim = f"__EOF_{name}__"
         fh.write(f"{name}<<{delim}\n{value}\n{delim}\n")
 
 
 def main() -> int:
+    try:  # emoji/arrow-safe stdout on Windows consoles too
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
     results = []
     for platform in ("android", "mac"):
         extract_path = INCOMING / f"{platform}-extract" / f"{platform}-extract.json"
@@ -229,7 +197,6 @@ def main() -> int:
         summary = "No changes detected."
     set_output("summary", summary)
 
-    # Machine-readable payload for the notifier (gitignored).
     (ROOT / "notify.json").write_text(
         json.dumps({
             "changed": changed,

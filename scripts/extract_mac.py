@@ -29,28 +29,29 @@ def plutil_to_obj(path: Path):
         return None
 
 
-def flatten_strings(rel: str, obj, out: dict, prefer_locales=("en", "Base", "en_US")):
-    """Add entries from one parsed file into the flat map.
+def has_letter(s: str) -> bool:
+    return any(ch.isalpha() for ch in s)
 
-    .strings  -> {key: value}
-    .loctable -> {locale: {key: value}}  (pick a preferred English locale)
+
+def collect_values(obj, out: set, prefer_locales=("en", "Base", "en_US")):
+    """Collect human-readable string VALUES from one parsed file into `out`.
+
+    We diff the set of values (not keys), to stay consistent with Android where
+    keys are unusable. .strings -> {key: value}; .loctable -> {locale: {k: v}}.
     """
     if not isinstance(obj, dict):
         return
-    # .loctable: values are dicts-per-locale.
+    # .loctable: values are dicts-per-locale — pick a preferred English locale.
     if obj and all(isinstance(v, dict) for v in obj.values()):
-        locale = next((l for l in prefer_locales if l in obj), None)
-        if locale is None:
-            locale = next(iter(obj))
+        locale = next((l for l in prefer_locales if l in obj), None) or next(iter(obj))
         table = obj.get(locale, {})
-        for k, v in table.items():
-            if isinstance(v, str):
-                out[f"{rel}::{k}"] = v
-        return
-    # plain .strings
-    for k, v in obj.items():
+    else:
+        table = obj
+    for v in table.values():
         if isinstance(v, str):
-            out[f"{rel}::{k}"] = v
+            t = v.strip()
+            if len(t) >= 2 and has_letter(t):
+                out.add(t)
 
 
 def find_app(mount: Path) -> Path:
@@ -84,7 +85,7 @@ def main() -> int:
     out_path = Path(sys.argv[2])
 
     mount = Path(tempfile.mkdtemp(prefix="wamount-"))
-    strings: dict = {}
+    strings: set = set()
     meta = {"version": None, "build": None}
     try:
         run(["hdiutil", "attach", str(dmg), "-nobrowse", "-quiet", "-mountpoint", str(mount)])
@@ -105,9 +106,7 @@ def main() -> int:
             if f in seen or not f.exists():
                 continue
             seen.add(f)
-            rel = str(f.relative_to(resources))
-            obj = plutil_to_obj(f)
-            flatten_strings(rel, obj, strings)
+            collect_values(plutil_to_obj(f), strings)
     finally:
         subprocess.run(["hdiutil", "detach", str(mount), "-quiet", "-force"],
                        capture_output=True, text=True)
@@ -116,11 +115,11 @@ def main() -> int:
         "platform": "mac",
         "version": meta["version"],
         "build": meta["build"],
-        "strings": strings,
+        "strings": sorted(strings),
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    print(f"==> mac v{data['version']} (build {data['build']}): {len(strings)} strings")
+    out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"==> mac v{data['version']} (build {data['build']}): {len(strings)} text values")
     return 0
 
 

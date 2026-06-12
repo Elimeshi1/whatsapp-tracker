@@ -23,7 +23,6 @@ import smtplib
 import sys
 import urllib.parse
 import urllib.request
-import uuid
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -41,67 +40,95 @@ def trunc(v: str, limit: int = 200) -> str:
 
 
 # ---------------------------------------------------------------- Telegram ---
-# Uses MarkdownV2 with collapsible (expandable) blockquotes — Telegram's
-# document-grade formatting. Details per section are tucked into an expandable
-# quote so the message is compact but fully inspectable with one tap.
+# Uses Telegram's "Rich Messages" (Bot API 10.1, June 2026) via sendRichMessage
+# with an HTML document: section headings, a divider, and collapsible <details>
+# blocks for the added / changed / removed entries — the whole diff inline, no
+# attachment. Falls back to a plain sendMessage if sendRichMessage ever errors.
 
-_MDV2_SPECIAL = set(r"_*[]()~`>#+-=|{}.!\\")
-
-
-def mdv2(s: str) -> str:
-    """Escape arbitrary text for Telegram MarkdownV2."""
-    return "".join("\\" + ch if ch in _MDV2_SPECIAL else ch for ch in (s or ""))
+RICH_MAX_ITEMS = 60       # per category — keeps under the 500-block limit
+RICH_CHAR_BUDGET = 30000  # under the 32768-char rich-message hard limit
 
 
-def mdcode(s: str) -> str:
-    """Render text as an inline code span (only ` and \\ need escaping)."""
-    s = (s or "").replace("\\", "\\\\").replace("`", "\\`")
-    return f"`{s}`"
+def esc(s: str) -> str:
+    """Escape the only entities the rich HTML parser needs (& < >)."""
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def expandable_quote(lines: list) -> str:
-    """Wrap already-escaped single-line strings in an expandable blockquote."""
-    if not lines:
-        return ""
-    if len(lines) == 1:
-        return f"**>{lines[0]}||"
-    middle = [f">{l}" for l in lines[1:-1]]
-    return "\n".join([f"**>{lines[0]}", *middle, f">{lines[-1]}||"])
+def _detail_block(emoji_label: str, items_html: str, count: int, open_: bool) -> str:
+    attr = " open" if open_ else ""
+    return (f"<details{attr}><summary><b>{emoji_label} ({count})</b></summary>"
+            f"<ul>{items_html}</ul></details>")
 
 
-def tg_render(run: dict) -> str:
-    """Build a MarkdownV2 message for one platform run."""
+def rich_html(run: dict, generated: str) -> str:
+    """Build the rich-message HTML document for one platform run."""
     emoji = PLATFORM_EMOJI.get(run["platform"], "📱")
-    head = f"{emoji} *WhatsApp {run['platform'].capitalize()} beta* v{mdv2(str(run['version']))}"
-    if run.get("version_extra"):
-        head += f"\n_{mdv2(run['version_extra'])}_"
+    ver = esc(str(run["version"]))
+    extra = f" · {esc(run['version_extra'])}" if run.get("version_extra") else ""
+    prev = run.get("prev_version")
+
+    head = [f"<h3>{emoji} WhatsApp {run['platform'].capitalize()} beta</h3>"]
+    if prev and not run.get("initial"):
+        head.append(f"<p>{esc(str(prev))} &rarr; <b>{ver}</b>{extra}</p>")
+    else:
+        head.append(f"<p><b>{ver}</b>{extra}</p>")
+
     if run.get("initial"):
-        counts = ", ".join(f"{v} {k}" for k, v in run.get("counts", {}).items())
-        return head + f"\n\n_Initial baseline captured_ \\({mdv2(counts)}\\)\\."
+        counts = ", ".join(f"{v} {esc(k)}" for k, v in run.get("counts", {}).items())
+        head.append(f"<p><i>Initial baseline captured</i> ({esc(counts)}).</p>")
+        return "".join(head)
+
+    added = run.get("added", [])
+    removed = run.get("removed", [])
+
+    def li_values(values):
+        out = []
+        for i, v in enumerate(values):
+            if i >= RICH_MAX_ITEMS:
+                out.append(f"<li>… +{len(values) - i} more</li>")
+                break
+            out.append(f"<li>{esc(trunc(v, 200))}</li>")
+        return "".join(out)
 
     def build(with_details: bool) -> str:
-        parts = [head, ""]
-        for sec in run["sections"]:
-            a, c, r = sec["added"], sec["changed"], sec["removed"]
-            parts.append(f"*{mdv2(sec['title'])}* — ➕{len(a)} ✏️{len(c)} ➖{len(r)}")
-            if with_details:
-                detail = []
-                for k, v in a.items():
-                    detail.append(f"➕ {mdcode(k)}: {mdv2(trunc(v))}")
-                for k, (old, new) in c.items():
-                    detail.append(f"✏️ {mdcode(k)}: {mdv2(trunc(old, 80))} → {mdv2(trunc(new))}")
-                for k in r:
-                    detail.append(f"➖ {mdcode(k)}")
-                if detail:
-                    parts.append(expandable_quote(detail))
-            parts.append("")
-        return "\n".join(parts).rstrip()
+        parts = list(head)
+        parts.append("<hr/>")
+        parts.append(f"<p>➕ <b>{len(added)} new</b> &nbsp;&nbsp; ➖ {len(removed)} removed</p>")
+        if with_details:
+            if added:
+                parts.append(_detail_block("➕ New texts", li_values(added), len(added), open_=True))
+            if removed:
+                parts.append(_detail_block("➖ Removed texts", li_values(removed), len(removed), open_=False))
+        if generated:
+            parts.append(f"<footer>WhatsApp beta tracker · {esc(generated)}</footer>")
+        return "".join(parts)
 
-    text = build(with_details=True)
-    if len(text) > TG_LIMIT:
-        # Re-render compact to avoid truncating mid-entity (breaks MarkdownV2).
-        text = build(with_details=False) + "\n\n_Full details in the attached report_\\."
-    return text
+    doc = build(with_details=True)
+    if len(doc) > RICH_CHAR_BUDGET:
+        # Large update: section summaries only, to stay within the char limit.
+        doc = build(with_details=False)
+        doc += "<p><i>Large update — open the full report in the repository.</i></p>"
+    return doc
+
+
+def basic_html(run: dict) -> str:
+    """sendMessage-compatible HTML (fallback if sendRichMessage is unavailable)."""
+    emoji = PLATFORM_EMOJI.get(run["platform"], "📱")
+    prev = f"{esc(str(run['prev_version']))} → " if run.get("prev_version") else ""
+    lines = [f"{emoji} <b>WhatsApp {run['platform'].capitalize()} beta</b> "
+             f"{prev}<b>{esc(str(run['version']))}</b>"]
+    if run.get("initial"):
+        texts = run.get("counts", {}).get("texts", 0)
+        lines.append(f"<i>Initial baseline captured</i> ({texts} texts).")
+        return "\n".join(lines)
+    added = run.get("added", [])
+    removed = run.get("removed", [])
+    lines.append(f"\n➕ <b>{len(added)} new</b> · ➖ {len(removed)} removed")
+    for v in added[:40]:
+        lines.append(f"➕ {esc(trunc(v))}")
+    for v in removed[:15]:
+        lines.append(f"➖ {esc(trunc(v))}")
+    return "\n".join(lines)[:TG_LIMIT]
 
 
 def tg_post(token: str, method: str, data: bytes, headers: dict):
@@ -111,49 +138,38 @@ def tg_post(token: str, method: str, data: bytes, headers: dict):
         return json.loads(resp.read().decode())
 
 
-def tg_send_message(token: str, chat_id: str, text: str):
+def tg_send_rich(token: str, chat_id: str, html_doc: str):
+    rich = {"html": html_doc}
+    data = urllib.parse.urlencode({
+        "chat_id": chat_id, "rich_message": json.dumps(rich, ensure_ascii=False),
+    }).encode()
+    return tg_post(token, "sendRichMessage", data,
+                   {"Content-Type": "application/x-www-form-urlencoded"})
+
+
+def tg_send_message(token: str, chat_id: str, text: str, parse_mode: str = "HTML"):
     data = urllib.parse.urlencode({
         "chat_id": chat_id, "text": text,
-        "parse_mode": "MarkdownV2", "disable_web_page_preview": "true",
+        "parse_mode": parse_mode, "disable_web_page_preview": "true",
     }).encode()
     return tg_post(token, "sendMessage", data,
                    {"Content-Type": "application/x-www-form-urlencoded"})
 
 
-def tg_send_document(token: str, chat_id: str, filepath: Path, caption: str = ""):
-    boundary = "----wa" + uuid.uuid4().hex
-    body = bytearray()
-
-    def field(name, value):
-        body.extend((f"--{boundary}\r\n"
-                     f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
-                     f"{value}\r\n").encode())
-
-    field("chat_id", chat_id)
-    if caption:
-        field("caption", caption)  # plain text caption (no parse_mode)
-    body.extend((f"--{boundary}\r\n"
-                 f'Content-Disposition: form-data; name="document"; filename="{filepath.name}"\r\n'
-                 f"Content-Type: text/markdown\r\n\r\n").encode())
-    body.extend(filepath.read_bytes())
-    body.extend(f"\r\n--{boundary}--\r\n".encode())
-    return tg_post(token, "sendDocument", bytes(body),
-                   {"Content-Type": f"multipart/form-data; boundary={boundary}"})
-
-
 def send_telegram(payload: dict):
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "DRY")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "DRY")
+    generated = payload.get("generated", "")
     for run in payload["runs"]:
-        text = tg_render(run)
+        doc = rich_html(run, generated)
         if DRY:
-            print(f"\n----- TELEGRAM ({run['platform']}) -----\n{text}\n[attach: {run['report']}]")
+            print(f"\n----- TELEGRAM rich HTML ({run['platform']}) -----\n{doc}")
             continue
-        tg_send_message(token, chat_id, text)
-        report = ROOT / run["report"]
-        if report.exists() and not run.get("initial"):
-            tg_send_document(token, chat_id, report,
-                             caption=f"Full report · {run['platform']} v{run['version']}")
+        try:
+            tg_send_rich(token, chat_id, doc)
+        except Exception as exc:  # noqa: BLE001 — degrade gracefully, still notify
+            print(f"notify: sendRichMessage failed ({exc}); using sendMessage", file=sys.stderr)
+            tg_send_message(token, chat_id, basic_html(run), parse_mode="HTML")
     print("Telegram: sent" if not DRY else "Telegram: dry-run rendered")
 
 
@@ -164,30 +180,24 @@ def html_run(run: dict) -> str:
     ve = f" &middot; {html.escape(run['version_extra'])}" if run.get("version_extra") else ""
     out = [f"<h2 style='margin:18px 0 6px'>{emoji} WhatsApp {run['platform'].capitalize()} "
            f"beta v{html.escape(str(run['version']))}{ve}</h2>"]
+    prev = run.get("prev_version")
+    if prev and not run.get("initial"):
+        out.append(f"<p style='color:#5f6368;margin:0 0 8px'>compared against v{html.escape(str(prev))}</p>")
     if run.get("initial"):
-        counts = ", ".join(f"{v} {k}" for k, v in run.get("counts", {}).items())
-        out.append(f"<p><i>Initial baseline captured</i> ({html.escape(counts)}).</p>")
+        texts = run.get("counts", {}).get("texts", 0)
+        out.append(f"<p><i>Initial baseline captured</i> ({texts} texts).</p>")
         return "\n".join(out)
 
-    for sec in run["sections"]:
-        out.append(f"<h3 style='margin:14px 0 4px'>{html.escape(sec['title'])}</h3>")
-        if sec["added"]:
-            out.append("<p style='margin:4px 0;color:#137333'><b>➕ Added</b></p><ul style='margin:0'>")
-            for k, v in sec["added"].items():
-                out.append(f"<li><code>{html.escape(k)}</code> — {html.escape(trunc(v, 400))}</li>")
-            out.append("</ul>")
-        if sec["changed"]:
-            out.append("<p style='margin:4px 0;color:#b06000'><b>✏️ Changed</b></p><ul style='margin:0'>")
-            for k, (old, new) in sec["changed"].items():
-                out.append(f"<li><code>{html.escape(k)}</code><br>"
-                           f"<span style='color:#888'>before:</span> {html.escape(trunc(old, 400))}<br>"
-                           f"<span style='color:#888'>after:</span> {html.escape(trunc(new, 400))}</li>")
-            out.append("</ul>")
-        if sec["removed"]:
-            out.append("<p style='margin:4px 0;color:#c5221f'><b>➖ Removed</b></p><ul style='margin:0'>")
-            for k, v in sec["removed"].items():
-                out.append(f"<li><code>{html.escape(k)}</code> — {html.escape(trunc(v, 400))}</li>")
-            out.append("</ul>")
+    added = run.get("added", [])
+    removed = run.get("removed", [])
+    if added:
+        out.append(f"<p style='margin:10px 0 4px;color:#137333'><b>➕ New texts ({len(added)})</b></p><ul style='margin:0'>")
+        out += [f"<li>{html.escape(trunc(v, 400))}</li>" for v in added]
+        out.append("</ul>")
+    if removed:
+        out.append(f"<p style='margin:10px 0 4px;color:#c5221f'><b>➖ Removed texts ({len(removed)})</b></p><ul style='margin:0'>")
+        out += [f"<li>{html.escape(trunc(v, 400))}</li>" for v in removed]
+        out.append("</ul>")
     return "\n".join(out)
 
 
