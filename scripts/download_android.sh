@@ -21,14 +21,18 @@ UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrom
 
 if [ -n "${APK_URL:-}" ]; then
   echo "==> Using manual APK_URL override"
-  SRC="$APK_URL"
+  echo "==> Downloading from: $APK_URL"
+  # Mirrors (APKMirror/CDN) usually expect a browser User-Agent.
+  curl -fSL --retry 3 --retry-delay 5 -A "$UA" -o "$APK_PATH" "$APK_URL"
 else
-  echo "==> Using WhatsApp self-hosted APK (no override supplied)"
   SRC="https://www.whatsapp.com/android/current/WhatsApp.apk"
+  echo "==> Using WhatsApp self-hosted APK (no override supplied)"
+  echo "==> Downloading from: $SRC"
+  # IMPORTANT: WhatsApp's edge returns HTTP 400 for a *spoofed browser*
+  # User-Agent. With curl's default UA it serves the APK fine — so do NOT
+  # pass -A here.
+  curl -fSL --retry 3 --retry-delay 5 -o "$APK_PATH" "$SRC"
 fi
-
-echo "==> Downloading from: $SRC"
-curl -fSL --retry 3 --retry-delay 5 -A "$UA" -o "$APK_PATH" "$SRC"
 
 # Sanity check: an APK is a ZIP archive (magic bytes 'PK').
 MAGIC=$(head -c 2 "$APK_PATH" | tr -d '\0')
