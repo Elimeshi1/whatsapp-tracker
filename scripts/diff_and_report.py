@@ -56,13 +56,19 @@ def fmt_val(v: str, limit: int = 300) -> str:
     return v if len(v) <= limit else v[:limit] + " …"
 
 
+def version_extra(platform: str, new_data: dict) -> str:
+    """Human label for the secondary version id (versionCode / build)."""
+    if platform == "android" and new_data.get("versionCode"):
+        return f"versionCode {new_data['versionCode']}"
+    if platform == "mac" and new_data.get("build"):
+        return f"build {new_data['build']}"
+    return ""
+
+
 def render_report(platform: str, new_data: dict, diffs: dict, initial: bool) -> str:
     version = new_data.get("version")
-    extra = ""
-    if platform == "android" and new_data.get("versionCode"):
-        extra = f" (versionCode {new_data['versionCode']})"
-    if platform == "mac" and new_data.get("build"):
-        extra = f" (build {new_data['build']})"
+    ve = version_extra(platform, new_data)
+    extra = f" ({ve})" if ve else ""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     lines = [f"# WhatsApp {platform.capitalize()} beta — v{version}{extra}", "", f"_Generated {now}_", ""]
@@ -158,12 +164,29 @@ def process_platform(platform: str, extract_path: Path):
             if a or r or c:
                 parts.append(f"{title.split(' (')[0].lower()} +{len(a)}/~{len(c)}/-{len(r)}")
         summary = f"{platform} v{version}: " + ", ".join(parts)
+
+    # Structured sections so the notifier can render rich output per channel.
+    sections = []
+    for key, title in SECTIONS[platform]:
+        added, removed, changed = diffs[key]
+        if not (added or removed or changed):
+            continue
+        sections.append({
+            "title": title,
+            "added": added,
+            "changed": {k: list(v) for k, v in changed.items()},
+            "removed": removed,
+        })
+
     return {
         "platform": platform,
         "version": version,
+        "version_extra": version_extra(platform, new_data),
         "summary": summary,
         "report": report_rel,
         "initial": initial,
+        "counts": {key: len(new_data.get(key, {})) for key, _ in SECTIONS[platform]},
+        "sections": sections,
     }
 
 
@@ -205,6 +228,16 @@ def main() -> int:
     else:
         summary = "No changes detected."
     set_output("summary", summary)
+
+    # Machine-readable payload for the notifier (gitignored).
+    (ROOT / "notify.json").write_text(
+        json.dumps({
+            "changed": changed,
+            "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "runs": results,
+        }, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:

@@ -5,7 +5,9 @@ extracts their texts and feature toggles, and reports what changed between
 versions — so you can see what's new before it ships.
 
 It runs entirely on **GitHub Actions** (no server needed) on a schedule, and
-opens a GitHub **issue** whenever something changes.
+pushes a clean, formatted notification to **Telegram and/or email** whenever
+something changes — showing exactly what was added, changed, or removed, with
+the full report attached.
 
 ## What it tracks
 
@@ -30,7 +32,7 @@ schedule (every 6h) ─┬─ android job (ubuntu): download APK → apktool dec
                                              ├─ update baselines + version snapshots
                                              ├─ append CHANGELOG.md
                                              ├─ commit back to the repo
-                                             └─ open an issue if anything changed
+                                             └─ notify Telegram / email if changed
 ```
 
 The committed `data/<platform>/latest.json` is the baseline; the next run diffs
@@ -43,15 +45,53 @@ against it. Git history therefore doubles as a full version-by-version archive.
 - **`CHANGELOG.md`** — one line per run, newest first.
 - **`data/<platform>/latest.json`** — current baseline.
 - **`data/<platform>/snapshots/<version>.json`** — per-version archive.
-- A **GitHub issue** per run that had changes (your notification).
+- A **Telegram message** and/or **email** per run that had changes (see below).
 
 ## Setup
 
 1. Create a new GitHub repo and push this folder (see commands below).
 2. In the repo: **Settings → Actions → General → Workflow permissions** →
-   enable **Read and write permissions** (lets the workflow commit + open issues).
-3. The schedule starts automatically. To run on demand:
+   enable **Read and write permissions** (lets the workflow commit results).
+3. Configure at least one notification channel (next section).
+4. The schedule starts automatically. To run on demand:
    **Actions → WhatsApp Beta Tracker → Run workflow**.
+
+## Notifications
+
+Set these under **Settings → Secrets and variables → Actions → New repository
+secret**. Configure Telegram, email, or both — a channel turns on only when its
+secrets are present. If neither is set, the run still records changes in the
+repo but sends nothing.
+
+### Telegram (recommended — instant phone push, rich formatting)
+
+1. In Telegram, message **@BotFather** → `/newbot` → follow the prompts → copy
+   the **bot token**.
+2. Send any message to your new bot (so it's allowed to message you back).
+3. Get your **chat id**: open
+   `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser and read
+   `result[].message.chat.id` (a number; for groups it starts with `-`).
+4. Add secrets:
+   - `TELEGRAM_BOT_TOKEN` = the bot token
+   - `TELEGRAM_CHAT_ID` = your chat id
+
+You'll get one message per changed platform with the diff, plus the full report
+attached as a Markdown file.
+
+### Email (Gmail)
+
+1. Enable 2-Step Verification on your Google account, then create an
+   **App Password** (Google Account → Security → App passwords).
+2. Add secrets:
+   - `MAIL_USERNAME` = your Gmail address
+   - `MAIL_PASSWORD` = the 16-char app password (not your normal password)
+   - `MAIL_TO` = where to send (can be the same address)
+   - *(optional)* `MAIL_FROM`, `MAIL_HOST` (default `smtp.gmail.com`),
+     `MAIL_PORT` (default `465`)
+
+You'll get one HTML email per run summarizing every changed platform, with the
+reports attached. For a non-Gmail provider, set `MAIL_HOST`/`MAIL_PORT`
+accordingly (port `465` = SSL, anything else = STARTTLS).
 
 ### Getting the *exact* latest Android beta
 
@@ -75,6 +115,9 @@ python3 scripts/extract_mac.py artifacts/WhatsApp-mac.dmg artifacts/mac-extract.
 # Diff (expects incoming/<platform>-extract/<platform>-extract.json)
 mkdir -p incoming/android-extract && cp artifacts/android-extract.json incoming/android-extract/
 python3 scripts/diff_and_report.py
+
+# Preview notifications without sending (renders Telegram text + email HTML)
+NOTIFY_DRY_RUN=1 python3 scripts/notify.py
 ```
 
 ## Tuning

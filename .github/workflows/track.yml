@@ -13,7 +13,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 # Never let two runs commit on top of each other.
 concurrency:
@@ -101,14 +100,15 @@ jobs:
             git push
           fi
 
-      - name: Open issue on change
+      - name: Notify (Telegram / email)
         if: steps.diff.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          DATE=$(date -u +'%Y-%m-%d %H:%M UTC')
-          printf 'New WhatsApp beta changes detected at %s\n\n%s\n\nSee the latest files under `reports/`.\n' \
-            "$DATE" "${{ steps.diff.outputs.summary }}" > /tmp/issue.md
-          gh issue create \
-            --title "WhatsApp beta changes — $DATE" \
-            --body-file /tmp/issue.md
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_HOST: ${{ secrets.MAIL_HOST }}
+          MAIL_PORT: ${{ secrets.MAIL_PORT }}
+        run: python3 scripts/notify.py

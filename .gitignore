@@ -5,5 +5,7 @@ decoded/
 *.apk
 *.dmg
 apktool.jar
+notify.json
+notify_email_preview.html
 __pycache__/
 *.pyc
