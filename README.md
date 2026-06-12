@@ -63,7 +63,7 @@ Android job will use that instead.
 ## Running locally (optional)
 
 ```bash
-# Android (needs Java + apktool.jar in the repo root)
+# Android (needs Java + apktool.jar — same version pinned in the workflow)
 bash scripts/download_android.sh artifacts
 java -jar apktool.jar d -s -f -o decoded artifacts/WhatsApp.apk
 python3 scripts/extract_android.py decoded artifacts/android-extract.json

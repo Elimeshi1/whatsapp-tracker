@@ -34,7 +34,7 @@ jobs:
       - name: Download apktool
         run: |
           curl -fSL -o apktool.jar \
-            https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+            https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar
 
       - name: Download WhatsApp beta APK
         env:
