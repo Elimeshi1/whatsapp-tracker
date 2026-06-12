@@ -1,12 +1,17 @@
 # WhatsApp Beta Tracker
 
 Automatically watches the **WhatsApp beta** builds for **Android** and **macOS**,
-extracts their UI texts, and reports which texts are **new** or **removed**
-between versions — so you can see what's coming before it ships.
+extracts their UI texts, and reports what changed between versions — **classifying
+each change** so real new features stand out from noise:
+
+- **🆕 New** — text with no close match in the previous build (likely new features)
+- **✏️ Reworded** — an existing string with a minor text change (e.g. "Failed to
+  login" → "Couldn't log in") — surfaced separately so it doesn't look new
+- **➖ Removed** — text that's gone
 
 It runs entirely on **GitHub Actions** (no server needed) on a schedule, and
 pushes a clean, formatted notification to **Telegram and/or email** whenever
-something changes — the new/removed texts laid out inline and readable.
+something changes — laid out inline and readable.
 
 ## What it tracks
 
@@ -42,7 +47,7 @@ against it. Git history therefore doubles as a full version-by-version archive.
 ## Output
 
 - **`reports/<platform>/<date>_v<version>.md`** — the organized "what's new":
-  the new and removed texts for that version.
+  the new / reworded / removed texts for that version.
 - **`CHANGELOG.md`** — one line per run, newest first.
 - **`data/<platform>/latest.json`** — current baseline.
 - **`data/<platform>/snapshots/<version>.json`** — per-version archive.
@@ -78,8 +83,9 @@ repo but sends nothing.
 
 You'll get one message per changed platform. Messages use Telegram's
 **Rich Messages** (`sendRichMessage`, Bot API 10.1) — an HTML document with a
-heading, a divider, and **collapsible `<details>` sections** for the new and
-removed texts, so the whole diff is inline and readable (no file). If
+heading, a divider, and **collapsible `<details>` sections**: 🆕 New (open by
+default), ✏️ Reworded and ➖ Removed (collapsed). The whole diff is inline and
+readable (no file). If
 `sendRichMessage` is ever unavailable it falls back to a plain `sendMessage`.
 The bot must be an admin of the target channel to post (for a private DM, use
 your own user id as `TELEGRAM_CHAT_ID`).

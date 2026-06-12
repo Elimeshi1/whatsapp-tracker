@@ -15,8 +15,10 @@ For each platform present under ./incoming this:
 
 Runs from the repo root inside the GitHub Actions "report" job.
 """
+import difflib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +53,60 @@ def as_values(strings) -> set:
     return set()
 
 
+_TAG = re.compile(r"<[^>]+>")
+_PLACEHOLDER = re.compile(r"%\d*\$?[sd@]")
+_NONWORD = re.compile(r"[^\w\s]")
+_WS = re.compile(r"\s+")
+
+
+def _norm(s: str) -> str:
+    """Normalize for similarity: drop tags, placeholders, punctuation, case."""
+    s = _TAG.sub(" ", s)
+    s = _PLACEHOLDER.sub(" ", s)
+    s = _NONWORD.sub(" ", s.lower())
+    return _WS.sub(" ", s).strip()
+
+
+def classify_changes(added, removed):
+    """Split a raw added/removed value diff into three buckets:
+
+      new       — added values with no close match in `removed` (likely new
+                  features / genuinely new UI text)
+      reworded  — [old, new] pairs: an added value that is just a reworded
+                  version of a removed one (same string, minor text change)
+      removed   — removed values with no close match in `added`
+
+    A pair counts as a reword when the normalized strings are very similar
+    (ratio ≥ 0.85) or fairly similar with strong word overlap (ratio ≥ 0.6 and
+    Jaccard ≥ 0.5). Greedy best-match; each removed value is used at most once.
+    """
+    rem = [(r, _norm(r), set(_norm(r).split())) for r in removed]
+    used = set()
+    new, reworded = [], []
+    for a in added:
+        na = _norm(a)
+        ta = set(na.split())
+        best, best_ratio = None, 0.0
+        if na:
+            for i, (_, nr, tr) in enumerate(rem):
+                if i in used or not nr:
+                    continue
+                jac = len(ta & tr) / len(ta | tr) if (ta and tr) else 0.0
+                # Cheap prune: skip clearly-unrelated pairs.
+                if jac < 0.3 and abs(len(na) - len(nr)) > 0.4 * max(len(na), len(nr)):
+                    continue
+                ratio = difflib.SequenceMatcher(None, na, nr).ratio()
+                if (ratio >= 0.85 or (ratio >= 0.6 and jac >= 0.5)) and ratio > best_ratio:
+                    best, best_ratio = i, ratio
+        if best is not None:
+            used.add(best)
+            reworded.append([removed[best], a])
+        else:
+            new.append(a)
+    removed_only = [r for i, r in enumerate(removed) if i not in used]
+    return new, reworded, removed_only
+
+
 def version_extra(platform: str, data: dict) -> str:
     if platform == "android" and data.get("versionCode"):
         return f"versionCode {data['versionCode']}"
@@ -64,7 +120,7 @@ def fmt_val(v: str, limit: int = 400) -> str:
     return v if len(v) <= limit else v[:limit] + " …"
 
 
-def render_report(platform: str, new_data: dict, added, removed, prev_version, initial: bool) -> str:
+def render_report(platform, new_data, new, reworded, removed, prev_version, initial: bool) -> str:
     ve = version_extra(platform, new_data)
     extra = f" ({ve})" if ve else ""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -82,10 +138,15 @@ def render_report(platform: str, new_data: dict, added, removed, prev_version, i
         lines.append("")
         return "\n".join(lines)
 
-    if added:
-        lines.append(f"## ➕ New texts ({len(added)})")
+    if new:
+        lines.append(f"## 🆕 New texts — possible new features ({len(new)})")
         lines.append("")
-        lines += [f"- {fmt_val(v)}" for v in added]
+        lines += [f"- {fmt_val(v)}" for v in new]
+        lines.append("")
+    if reworded:
+        lines.append(f"## ✏️ Reworded — existing text, minor changes ({len(reworded)})")
+        lines.append("")
+        lines += [f"- {fmt_val(old)}  →  {fmt_val(newv)}" for old, newv in reworded]
         lines.append("")
     if removed:
         lines.append(f"## ➖ Removed texts ({len(removed)})")
@@ -108,11 +169,16 @@ def process_platform(platform: str, extract_path: Path):
 
     old_set = as_values((old_data or {}).get("strings"))
     new_set = as_values(new_data.get("strings"))
-    added = sorted(new_set - old_set)
-    removed = sorted(old_set - new_set)
 
     version = new_data.get("version") or "unknown"
-    has_changes = initial or bool(added) or bool(removed)
+    if initial:
+        new_items, reworded, removed_only = [], [], []
+        has_changes = True
+    else:
+        added = sorted(new_set - old_set)
+        removed = sorted(old_set - new_set)
+        new_items, reworded, removed_only = classify_changes(added, removed)
+        has_changes = bool(new_items or reworded or removed_only)
 
     if not has_changes:
         print(f"== {platform} v{version}: no changes")
@@ -126,9 +192,11 @@ def process_platform(platform: str, extract_path: Path):
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{date}_v{safe_ver}.md"
     report_path.write_text(
-        render_report(platform, new_data, added, removed, prev_version, initial), encoding="utf-8")
+        render_report(platform, new_data, new_items, reworded, removed_only, prev_version, initial),
+        encoding="utf-8")
     report_rel = report_path.relative_to(ROOT).as_posix()
-    print(f"== {platform} v{version}: +{len(added)} / -{len(removed)} → {report_rel}")
+    print(f"== {platform} v{version}: {len(new_items)} new / {len(reworded)} reworded / "
+          f"{len(removed_only)} removed → {report_rel}")
 
     # Update baseline + version snapshot.
     baseline_path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,7 +209,8 @@ def process_platform(platform: str, extract_path: Path):
     if initial:
         summary = f"{platform} v{version}: initial baseline ({len(new_set)} texts)"
     else:
-        summary = f"{platform} v{version}: +{len(added)} / -{len(removed)} texts"
+        summary = (f"{platform} v{version}: {len(new_items)} new, "
+                   f"{len(reworded)} reworded, {len(removed_only)} removed")
     return {
         "platform": platform,
         "version": version,
@@ -151,8 +220,9 @@ def process_platform(platform: str, extract_path: Path):
         "report": report_rel,
         "initial": initial,
         "counts": {"texts": len(new_set)},
-        "added": added,
-        "removed": removed,
+        "new": new_items,
+        "reworded": reworded,
+        "removed": removed_only,
     }
 
 

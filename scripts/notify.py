@@ -45,7 +45,7 @@ def trunc(v: str, limit: int = 200) -> str:
 # blocks for the added / changed / removed entries — the whole diff inline, no
 # attachment. Falls back to a plain sendMessage if sendRichMessage ever errors.
 
-RICH_MAX_ITEMS = 60       # per category — keeps under the 500-block limit
+RICH_MAX_ITEMS = 120      # per category — keeps under the 500-block limit
 RICH_CHAR_BUDGET = 30000  # under the 32768-char rich-message hard limit
 
 
@@ -78,34 +78,44 @@ def rich_html(run: dict, generated: str) -> str:
         head.append(f"<p><i>Initial baseline captured</i> ({esc(counts)}).</p>")
         return "".join(head)
 
-    added = run.get("added", [])
+    new = run.get("new", [])
+    reworded = run.get("reworded", [])
     removed = run.get("removed", [])
 
-    def li_values(values):
+    def li(values, fmt):
         out = []
         for i, v in enumerate(values):
             if i >= RICH_MAX_ITEMS:
-                out.append(f"<li>… +{len(values) - i} more</li>")
+                out.append(f"<li>… +{len(values) - i} more (full list in the repo report)</li>")
                 break
-            out.append(f"<li>{esc(trunc(v, 200))}</li>")
+            out.append("<li>" + fmt(v) + "</li>")
         return "".join(out)
 
     def build(with_details: bool) -> str:
         parts = list(head)
         parts.append("<hr/>")
-        parts.append(f"<p>➕ <b>{len(added)} new</b> &nbsp;&nbsp; ➖ {len(removed)} removed</p>")
+        parts.append(f"<p>🆕 <b>{len(new)} new</b> &nbsp;&nbsp; ✏️ {len(reworded)} reworded "
+                     f"&nbsp;&nbsp; ➖ {len(removed)} removed</p>")
         if with_details:
-            if added:
-                parts.append(_detail_block("➕ New texts", li_values(added), len(added), open_=True))
+            if new:
+                items = li(new, lambda v: esc(trunc(v, 220)))
+                parts.append(_detail_block("🆕 New texts — possible new features",
+                                           items, len(new), open_=True))
+            if reworded:
+                items = li(reworded,
+                           lambda p: f"{esc(trunc(p[0], 90))} &rarr; {esc(trunc(p[1], 120))}")
+                parts.append(_detail_block("✏️ Reworded — existing text, minor changes",
+                                           items, len(reworded), open_=False))
             if removed:
-                parts.append(_detail_block("➖ Removed texts", li_values(removed), len(removed), open_=False))
+                items = li(removed, lambda v: esc(trunc(v, 160)))
+                parts.append(_detail_block("➖ Removed", items, len(removed), open_=False))
         if generated:
             parts.append(f"<footer>WhatsApp beta tracker · {esc(generated)}</footer>")
         return "".join(parts)
 
     doc = build(with_details=True)
     if len(doc) > RICH_CHAR_BUDGET:
-        # Large update: section summaries only, to stay within the char limit.
+        # Very large update: section summaries only, to stay within the char limit.
         doc = build(with_details=False)
         doc += "<p><i>Large update — open the full report in the repository.</i></p>"
     return doc
@@ -121,13 +131,13 @@ def basic_html(run: dict) -> str:
         texts = run.get("counts", {}).get("texts", 0)
         lines.append(f"<i>Initial baseline captured</i> ({texts} texts).")
         return "\n".join(lines)
-    added = run.get("added", [])
+    new = run.get("new", [])
+    reworded = run.get("reworded", [])
     removed = run.get("removed", [])
-    lines.append(f"\n➕ <b>{len(added)} new</b> · ➖ {len(removed)} removed")
-    for v in added[:40]:
-        lines.append(f"➕ {esc(trunc(v))}")
-    for v in removed[:15]:
-        lines.append(f"➖ {esc(trunc(v))}")
+    lines.append(f"\n🆕 <b>{len(new)} new</b> · ✏️ {len(reworded)} reworded · ➖ {len(removed)} removed")
+    lines.append("\n<b>🆕 New:</b>")
+    for v in new[:40]:
+        lines.append(f"• {esc(trunc(v))}")
     return "\n".join(lines)[:TG_LIMIT]
 
 
@@ -188,11 +198,17 @@ def html_run(run: dict) -> str:
         out.append(f"<p><i>Initial baseline captured</i> ({texts} texts).</p>")
         return "\n".join(out)
 
-    added = run.get("added", [])
+    new = run.get("new", [])
+    reworded = run.get("reworded", [])
     removed = run.get("removed", [])
-    if added:
-        out.append(f"<p style='margin:10px 0 4px;color:#137333'><b>➕ New texts ({len(added)})</b></p><ul style='margin:0'>")
-        out += [f"<li>{html.escape(trunc(v, 400))}</li>" for v in added]
+    if new:
+        out.append(f"<p style='margin:10px 0 4px;color:#137333'><b>🆕 New texts — possible new features ({len(new)})</b></p><ul style='margin:0'>")
+        out += [f"<li>{html.escape(trunc(v, 400))}</li>" for v in new]
+        out.append("</ul>")
+    if reworded:
+        out.append(f"<p style='margin:10px 0 4px;color:#b06000'><b>✏️ Reworded — existing text, minor changes ({len(reworded)})</b></p><ul style='margin:0'>")
+        out += [f"<li>{html.escape(trunc(o, 200))} <span style='color:#888'>→</span> {html.escape(trunc(n, 300))}</li>"
+                for o, n in reworded]
         out.append("</ul>")
     if removed:
         out.append(f"<p style='margin:10px 0 4px;color:#c5221f'><b>➖ Removed texts ({len(removed)})</b></p><ul style='margin:0'>")
