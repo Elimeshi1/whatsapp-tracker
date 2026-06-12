@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# Downloads the WhatsApp (beta) APK for Android.
+# Downloads the WhatsApp APK for Android.
 #
 # Source priority:
-#   1. If APK_URL is set (manual override, e.g. an APKMirror beta link), use it.
-#   2. Otherwise fall back to APKPure's direct download endpoint.
+#   1. If APK_URL is set (manual override, e.g. a direct APKMirror beta link), use it.
+#   2. Otherwise use WhatsApp's own self-hosted APK at whatsapp.com.
+#
+# Why not APKPure/APKMirror by default? They sit behind Cloudflare and return
+# HTTP 403 to GitHub Actions' datacenter IPs. WhatsApp's self-hosted APK is
+# served directly and is reliably reachable from CI. It tracks WhatsApp's latest
+# distributed build; for a specific beta-channel APK, pass APK_URL.
 #
 # Usage: download_android.sh <out_dir>
 set -euo pipefail
@@ -18,8 +23,8 @@ if [ -n "${APK_URL:-}" ]; then
   echo "==> Using manual APK_URL override"
   SRC="$APK_URL"
 else
-  echo "==> Using APKPure direct endpoint (no override supplied)"
-  SRC="https://d.apkpure.com/b/APK/com.whatsapp?version=latest"
+  echo "==> Using WhatsApp self-hosted APK (no override supplied)"
+  SRC="https://www.whatsapp.com/android/current/WhatsApp.apk"
 fi
 
 echo "==> Downloading from: $SRC"

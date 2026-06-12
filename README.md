@@ -13,7 +13,7 @@ the full report attached.
 
 | Platform | Source | Extracted |
 |----------|--------|-----------|
-| Android  | APKPure direct download (or a manual APK URL you pass in) | `strings.xml`, `bools.xml`, `integers.xml` |
+| Android  | WhatsApp's self-hosted APK (or a manual APK URL you pass in) | `strings.xml`, `bools.xml`, `integers.xml` |
 | macOS    | Official beta endpoint `?configuration=Beta` → `.dmg` | every English/Base `*.strings` and `*.loctable` |
 
 - **Texts** are the UI strings — new features almost always introduce new strings.
@@ -95,10 +95,16 @@ accordingly (port `465` = SSL, anything else = STARTTLS).
 
 ### Getting the *exact* latest Android beta
 
-APKPure is fully automated but can lag a day or two behind the newest beta.
-When you want a specific build, grab its direct APK link (e.g. from APKMirror)
-and run the workflow manually with the **`apk_url`** input filled in — the
-Android job will use that instead.
+The default Android source is **WhatsApp's own self-hosted APK**
+(`whatsapp.com/android/current/WhatsApp.apk`) — the one source that reliably
+works from GitHub's datacenter IPs (APKPure/APKMirror return HTTP 403 there).
+It tracks WhatsApp's latest distributed build, which is usually at or near the
+current beta.
+
+When you want a *specific* beta-channel APK, grab its direct APK link (e.g. from
+APKMirror) and run the workflow manually with the **`apk_url`** input filled in —
+the Android job will use that instead. Note that APKMirror links are usually
+Cloudflare-gated, so you may need a direct CDN link rather than the page URL.
 
 ## Running locally (optional)
 
