@@ -120,12 +120,11 @@ def fmt_val(v: str, limit: int = 400) -> str:
     return v if len(v) <= limit else v[:limit] + " …"
 
 
-def render_report(platform, new_data, new, reworded, removed, prev_version, initial: bool) -> str:
+def render_report(platform, new_data, prev_version, initial: bool, d: dict) -> str:
     ve = version_extra(platform, new_data)
     extra = f" ({ve})" if ve else ""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    title = f"# WhatsApp {platform.capitalize()} beta — v{new_data.get('version')}{extra}"
-    lines = [title, ""]
+    lines = [f"# WhatsApp {platform.capitalize()} beta — v{new_data.get('version')}{extra}", ""]
     if prev_version and not initial:
         lines.append(f"_Compared against v{prev_version} · generated {now}_")
     else:
@@ -133,26 +132,28 @@ def render_report(platform, new_data, new, reworded, removed, prev_version, init
     lines.append("")
 
     if initial:
-        lines.append(f"> Initial baseline captured: {len(as_values(new_data.get('strings')))} text values. "
+        lines.append(f"> Initial baseline captured: {len(as_values(new_data.get('strings')))} text values, "
+                     f"{len(new_data.get('components') or [])} components. "
                      "Future runs will diff against this.")
         lines.append("")
         return "\n".join(lines)
 
-    if new:
-        lines.append(f"## 🆕 New texts — possible new features ({len(new)})")
+    def section(heading, items, fmt):
+        if not items:
+            return
+        lines.append(f"## {heading} ({len(items)})")
         lines.append("")
-        lines += [f"- {fmt_val(v)}" for v in new]
+        lines.extend(f"- {fmt(i)}" for i in items)
         lines.append("")
-    if reworded:
-        lines.append(f"## ✏️ Reworded — existing text, minor changes ({len(reworded)})")
-        lines.append("")
-        lines += [f"- {fmt_val(old)}  →  {fmt_val(newv)}" for old, newv in reworded]
-        lines.append("")
-    if removed:
-        lines.append(f"## ➖ Removed texts ({len(removed)})")
-        lines.append("")
-        lines += [f"- {fmt_val(v)}" for v in removed]
-        lines.append("")
+
+    code = lambda x: f"`{x}`"
+    section("🧩 New screens / features", d["new_components"], code)
+    section("🔐 New permissions", d["new_permissions"], code)
+    section("🆕 New texts — possible new features", d["new"], fmt_val)
+    section("✏️ Reworded — existing text, minor changes", d["reworded"],
+            lambda p: f"{fmt_val(p[0])}  →  {fmt_val(p[1])}")
+    section("➖ Removed texts", d["removed"], fmt_val)
+    section("➖ Removed screens / features", d["removed_components"], code)
     return "\n".join(lines)
 
 
@@ -169,16 +170,29 @@ def process_platform(platform: str, extract_path: Path):
 
     old_set = as_values((old_data or {}).get("strings"))
     new_set = as_values(new_data.get("strings"))
+    old_comp = as_values((old_data or {}).get("components"))
+    new_comp = as_values(new_data.get("components"))
+    old_perm = as_values((old_data or {}).get("permissions"))
+    new_perm = as_values(new_data.get("permissions"))
 
     version = new_data.get("version") or "unknown"
     if initial:
-        new_items, reworded, removed_only = [], [], []
+        d = {"new": [], "reworded": [], "removed": [],
+             "new_components": [], "removed_components": [], "new_permissions": [], "removed_permissions": []}
         has_changes = True
     else:
-        added = sorted(new_set - old_set)
-        removed = sorted(old_set - new_set)
-        new_items, reworded, removed_only = classify_changes(added, removed)
-        has_changes = bool(new_items or reworded or removed_only)
+        new_items, reworded, removed_only = classify_changes(
+            sorted(new_set - old_set), sorted(old_set - new_set))
+        d = {
+            "new": new_items,
+            "reworded": reworded,
+            "removed": removed_only,
+            "new_components": sorted(new_comp - old_comp),
+            "removed_components": sorted(old_comp - new_comp),
+            "new_permissions": sorted(new_perm - old_perm),
+            "removed_permissions": sorted(old_perm - new_perm),
+        }
+        has_changes = any(d.values())
 
     if not has_changes:
         print(f"== {platform} v{version}: no changes")
@@ -192,11 +206,11 @@ def process_platform(platform: str, extract_path: Path):
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{date}_v{safe_ver}.md"
     report_path.write_text(
-        render_report(platform, new_data, new_items, reworded, removed_only, prev_version, initial),
-        encoding="utf-8")
+        render_report(platform, new_data, prev_version, initial, d), encoding="utf-8")
     report_rel = report_path.relative_to(ROOT).as_posix()
-    print(f"== {platform} v{version}: {len(new_items)} new / {len(reworded)} reworded / "
-          f"{len(removed_only)} removed → {report_rel}")
+    print(f"== {platform} v{version}: {len(d['new_components'])} new screens / "
+          f"{len(d['new'])} new texts / {len(d['reworded'])} reworded / "
+          f"{len(d['removed'])} removed → {report_rel}")
 
     # Update baseline + version snapshot.
     baseline_path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,8 +223,15 @@ def process_platform(platform: str, extract_path: Path):
     if initial:
         summary = f"{platform} v{version}: initial baseline ({len(new_set)} texts)"
     else:
-        summary = (f"{platform} v{version}: {len(new_items)} new, "
-                   f"{len(reworded)} reworded, {len(removed_only)} removed")
+        parts = []
+        if d["new_components"]:
+            parts.append(f"{len(d['new_components'])} new screens")
+        parts.append(f"{len(d['new'])} new texts")
+        if d["reworded"]:
+            parts.append(f"{len(d['reworded'])} reworded")
+        if d["removed"]:
+            parts.append(f"{len(d['removed'])} removed")
+        summary = f"{platform} v{version}: " + ", ".join(parts)
     return {
         "platform": platform,
         "version": version,
@@ -220,9 +241,7 @@ def process_platform(platform: str, extract_path: Path):
         "report": report_rel,
         "initial": initial,
         "counts": {"texts": len(new_set)},
-        "new": new_items,
-        "reworded": reworded,
-        "removed": removed_only,
+        **d,
     }
 
 

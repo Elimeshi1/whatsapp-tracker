@@ -45,8 +45,8 @@ def trunc(v: str, limit: int = 200) -> str:
 # blocks for the added / changed / removed entries — the whole diff inline, no
 # attachment. Falls back to a plain sendMessage if sendRichMessage ever errors.
 
-RICH_MAX_ITEMS = 120      # per category — keeps under the 500-block limit
-RICH_CHAR_BUDGET = 30000  # under the 32768-char rich-message hard limit
+RICH_CHAR_BUDGET = 30000   # under the 32768-char rich-message hard limit
+RICH_BLOCK_BUDGET = 460    # under the 500-block hard limit
 
 
 def esc(s: str) -> str:
@@ -54,71 +54,107 @@ def esc(s: str) -> str:
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _detail_block(emoji_label: str, items_html: str, count: int, open_: bool) -> str:
+def short_component(name: str) -> str:
+    """Drop the com.whatsapp. prefix from a component/permission for readability."""
+    for p in ("com.whatsapp.", "android.permission.", "com.whatsapp"):
+        if name.startswith(p):
+            return name[len(p):].lstrip(".")
+    return name
+
+
+def _detail(summary_label: str, items_html: str, open_: bool) -> str:
     attr = " open" if open_ else ""
-    return (f"<details{attr}><summary><b>{emoji_label} ({count})</b></summary>"
-            f"<ul>{items_html}</ul></details>")
+    return f"<details{attr}><summary><b>{summary_label}</b></summary><ul>{items_html}</ul></details>"
 
 
-def rich_html(run: dict, generated: str) -> str:
-    """Build the rich-message HTML document for one platform run."""
+def _run_header(run: dict) -> str:
     emoji = PLATFORM_EMOJI.get(run["platform"], "📱")
     ver = esc(str(run["version"]))
     extra = f" · {esc(run['version_extra'])}" if run.get("version_extra") else ""
     prev = run.get("prev_version")
-
-    head = [f"<h3>{emoji} WhatsApp {run['platform'].capitalize()} beta</h3>"]
+    head = f"<h3>{emoji} WhatsApp {run['platform'].capitalize()} beta</h3>"
     if prev and not run.get("initial"):
-        head.append(f"<p>{esc(str(prev))} &rarr; <b>{ver}</b>{extra}</p>")
+        head += f"<p>{esc(str(prev))} &rarr; <b>{ver}</b>{extra}</p>"
     else:
-        head.append(f"<p><b>{ver}</b>{extra}</p>")
+        head += f"<p><b>{ver}</b>{extra}</p>"
+    return head
 
+
+def _summary_line(run: dict) -> str:
+    nc, nt = len(run.get("new_components", [])), len(run.get("new", []))
+    rw, rm = len(run.get("reworded", [])), len(run.get("removed", []))
+    parts = []
+    if nc:
+        parts.append(f"🧩 <b>{nc} new screens</b>")
+    parts.append(f"🆕 <b>{nt} new texts</b>")
+    if rw:
+        parts.append(f"✏️ {rw} reworded")
+    if rm:
+        parts.append(f"➖ {rm} removed")
+    return "<p>" + " &nbsp; ".join(parts) + "</p>"
+
+
+def _run_sections(run: dict):
+    """Ordered (label, open_by_default, [<li> html, ...]) for the diff."""
+    secs = []
+
+    def add(label, open_, items, fmt):
+        if items:
+            secs.append((label, open_, [f"<li>{fmt(i)}</li>" for i in items]))
+
+    # New screens/permissions are the clearest, most concrete "what's new" — open.
+    add("🧩 New screens / features", True, run.get("new_components", []),
+        lambda c: f"<code>{esc(short_component(c))}</code>")
+    add("🔐 New permissions", True, run.get("new_permissions", []),
+        lambda p: f"<code>{esc(short_component(p))}</code>")
+    # Long text lists stay collapsed.
+    add("🆕 New texts — possible new features", False, run.get("new", []),
+        lambda v: esc(trunc(v, 260)))
+    add("✏️ Reworded — existing text, minor changes", False, run.get("reworded", []),
+        lambda p: f"{esc(trunc(p[0], 100))} &rarr; {esc(trunc(p[1], 140))}")
+    add("➖ Removed texts", False, run.get("removed", []), lambda v: esc(trunc(v, 180)))
+    add("➖ Removed screens / features", False, run.get("removed_components", []),
+        lambda c: f"<code>{esc(short_component(c))}</code>")
+    return secs
+
+
+def rich_messages(run: dict, generated: str):
+    """Paginate one run into one or more rich HTML docs within Telegram limits.
+
+    No per-section caps: every item is shown; sections are split across multiple
+    messages only when a single message would exceed the size/block limits.
+    """
     if run.get("initial"):
-        counts = ", ".join(f"{v} {esc(k)}" for k, v in run.get("counts", {}).items())
-        head.append(f"<p><i>Initial baseline captured</i> ({esc(counts)}).</p>")
-        return "".join(head)
+        texts = run.get("counts", {}).get("texts", 0)
+        return [_run_header(run) + f"<p><i>Initial baseline captured</i> ({texts} texts).</p>"]
 
-    new = run.get("new", [])
-    reworded = run.get("reworded", [])
-    removed = run.get("removed", [])
+    header = _run_header(run) + "<hr/>" + _summary_line(run)
+    footer = f"<footer>WhatsApp beta tracker · {esc(generated)}</footer>" if generated else ""
+    messages, cur, blocks = [], header, 2
 
-    def li(values, fmt):
-        out = []
-        for i, v in enumerate(values):
-            if i >= RICH_MAX_ITEMS:
-                out.append(f"<li>… +{len(values) - i} more (full list in the repo report)</li>")
-                break
-            out.append("<li>" + fmt(v) + "</li>")
-        return "".join(out)
-
-    def build(with_details: bool) -> str:
-        parts = list(head)
-        parts.append("<hr/>")
-        parts.append(f"<p>🆕 <b>{len(new)} new</b> &nbsp;&nbsp; ✏️ {len(reworded)} reworded "
-                     f"&nbsp;&nbsp; ➖ {len(removed)} removed</p>")
-        if with_details:
-            if new:
-                items = li(new, lambda v: esc(trunc(v, 220)))
-                parts.append(_detail_block("🆕 New texts — possible new features",
-                                           items, len(new), open_=True))
-            if reworded:
-                items = li(reworded,
-                           lambda p: f"{esc(trunc(p[0], 90))} &rarr; {esc(trunc(p[1], 120))}")
-                parts.append(_detail_block("✏️ Reworded — existing text, minor changes",
-                                           items, len(reworded), open_=False))
-            if removed:
-                items = li(removed, lambda v: esc(trunc(v, 160)))
-                parts.append(_detail_block("➖ Removed", items, len(removed), open_=False))
-        if generated:
-            parts.append(f"<footer>WhatsApp beta tracker · {esc(generated)}</footer>")
-        return "".join(parts)
-
-    doc = build(with_details=True)
-    if len(doc) > RICH_CHAR_BUDGET:
-        # Very large update: section summaries only, to stay within the char limit.
-        doc = build(with_details=False)
-        doc += "<p><i>Large update — open the full report in the repository.</i></p>"
-    return doc
+    for label, open_, items in _run_sections(run):
+        idx, first = 0, True
+        while idx < len(items):
+            base = len(cur) + len(footer) + 80
+            chunk, clen = [], len(label) + 40
+            while idx < len(items):
+                it = items[idx]
+                if base + clen + len(it) > RICH_CHAR_BUDGET or blocks + len(chunk) + 2 > RICH_BLOCK_BUDGET:
+                    break
+                chunk.append(it)
+                clen += len(it)
+                idx += 1
+            if not chunk:                       # current message is full → flush
+                messages.append(cur + footer)
+                cur, blocks = "", 0
+                continue
+            summary_label = f"{label} ({len(items)})" if first else f"{label} (cont.)"
+            cur += _detail(summary_label, "".join(chunk), open_)
+            blocks += len(chunk) + 2
+            first = False
+    if cur:
+        messages.append(cur + footer)
+    return messages or [header + footer]
 
 
 def basic_html(run: dict) -> str:
@@ -131,13 +167,15 @@ def basic_html(run: dict) -> str:
         texts = run.get("counts", {}).get("texts", 0)
         lines.append(f"<i>Initial baseline captured</i> ({texts} texts).")
         return "\n".join(lines)
+    nc = run.get("new_components", [])
     new = run.get("new", [])
-    reworded = run.get("reworded", [])
-    removed = run.get("removed", [])
-    lines.append(f"\n🆕 <b>{len(new)} new</b> · ✏️ {len(reworded)} reworded · ➖ {len(removed)} removed")
-    lines.append("\n<b>🆕 New:</b>")
-    for v in new[:40]:
-        lines.append(f"• {esc(trunc(v))}")
+    lines.append(f"\n🧩 <b>{len(nc)} new screens</b> · 🆕 <b>{len(new)} new texts</b> · "
+                 f"✏️ {len(run.get('reworded', []))} reworded · ➖ {len(run.get('removed', []))} removed")
+    if nc:
+        lines.append("\n<b>🧩 New screens:</b>")
+        lines += [f"• <code>{esc(short_component(c))}</code>" for c in nc[:20]]
+    lines.append("\n<b>🆕 New texts:</b>")
+    lines += [f"• {esc(trunc(v))}" for v in new[:30]]
     return "\n".join(lines)[:TG_LIMIT]
 
 
@@ -171,12 +209,14 @@ def send_telegram(payload: dict):
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "DRY")
     generated = payload.get("generated", "")
     for run in payload["runs"]:
-        doc = rich_html(run, generated)
+        docs = rich_messages(run, generated)
         if DRY:
-            print(f"\n----- TELEGRAM rich HTML ({run['platform']}) -----\n{doc}")
+            for i, doc in enumerate(docs, 1):
+                print(f"\n----- TELEGRAM rich msg {i}/{len(docs)} ({run['platform']}) -----\n{doc}")
             continue
         try:
-            tg_send_rich(token, chat_id, doc)
+            for doc in docs:
+                tg_send_rich(token, chat_id, doc)
         except Exception as exc:  # noqa: BLE001 — degrade gracefully, still notify
             print(f"notify: sendRichMessage failed ({exc}); using sendMessage", file=sys.stderr)
             tg_send_message(token, chat_id, basic_html(run), parse_mode="HTML")
@@ -198,9 +238,19 @@ def html_run(run: dict) -> str:
         out.append(f"<p><i>Initial baseline captured</i> ({texts} texts).</p>")
         return "\n".join(out)
 
+    new_components = run.get("new_components", [])
+    new_permissions = run.get("new_permissions", [])
     new = run.get("new", [])
     reworded = run.get("reworded", [])
     removed = run.get("removed", [])
+    if new_components:
+        out.append(f"<p style='margin:10px 0 4px;color:#1a73e8'><b>🧩 New screens / features ({len(new_components)})</b></p><ul style='margin:0'>")
+        out += [f"<li><code>{html.escape(short_component(c))}</code></li>" for c in new_components]
+        out.append("</ul>")
+    if new_permissions:
+        out.append(f"<p style='margin:10px 0 4px;color:#1a73e8'><b>🔐 New permissions ({len(new_permissions)})</b></p><ul style='margin:0'>")
+        out += [f"<li><code>{html.escape(short_component(p))}</code></li>" for p in new_permissions]
+        out.append("</ul>")
     if new:
         out.append(f"<p style='margin:10px 0 4px;color:#137333'><b>🆕 New texts — possible new features ({len(new)})</b></p><ul style='margin:0'>")
         out += [f"<li>{html.escape(trunc(v, 400))}</li>" for v in new]

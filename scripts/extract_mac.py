@@ -33,6 +33,13 @@ def has_letter(s: str) -> bool:
     return any(ch.isalpha() for ch in s)
 
 
+def clean(text: str) -> str:
+    t = text.strip().replace("\\'", "'").replace('\\"', '"')
+    if len(t) >= 2 and t[0] == '"' and t[-1] == '"':
+        t = t[1:-1].strip()
+    return t
+
+
 def collect_values(obj, out: set, prefer_locales=("en", "Base", "en_US")):
     """Collect human-readable string VALUES from one parsed file into `out`.
 
@@ -49,7 +56,7 @@ def collect_values(obj, out: set, prefer_locales=("en", "Base", "en_US")):
         table = obj
     for v in table.values():
         if isinstance(v, str):
-            t = v.strip()
+            t = clean(v)
             if len(t) >= 2 and has_letter(t):
                 out.add(t)
 
