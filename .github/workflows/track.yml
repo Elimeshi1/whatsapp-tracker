@@ -1,0 +1,114 @@
+name: WhatsApp Beta Tracker
+
+on:
+  schedule:
+    # Every 6 hours. Adjust as you like (cron is in UTC).
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: "Optional direct APK URL for Android (e.g. an APKMirror beta link). Leave empty to use APKPure."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  issues: write
+
+# Never let two runs commit on top of each other.
+concurrency:
+  group: wa-tracker
+  cancel-in-progress: false
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Download apktool
+        run: |
+          curl -fSL -o apktool.jar \
+            https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+
+      - name: Download WhatsApp beta APK
+        env:
+          APK_URL: ${{ github.event.inputs.apk_url }}
+        run: bash scripts/download_android.sh artifacts
+
+      - name: Decode resources (no smali = fast)
+        run: java -jar apktool.jar d -s -f -o decoded artifacts/WhatsApp.apk
+
+      - name: Extract strings & flags
+        run: python3 scripts/extract_android.py decoded artifacts/android-extract.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-extract
+          path: artifacts/android-extract.json
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WhatsApp Mac beta
+        run: bash scripts/download_mac.sh artifacts
+
+      - name: Extract strings
+        run: python3 scripts/extract_mac.py artifacts/WhatsApp-mac.dmg artifacts/mac-extract.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-extract
+          path: artifacts/mac-extract.json
+          if-no-files-found: error
+
+  report:
+    needs: [android, macos]
+    # Run even if one platform job failed, so the other still gets reported.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect platform extracts
+        uses: actions/download-artifact@v4
+        with:
+          path: incoming
+        continue-on-error: true
+
+      - name: Diff & generate reports
+        id: diff
+        run: python3 scripts/diff_and_report.py
+
+      - name: Commit results
+        run: |
+          git config user.name "wa-tracker[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data reports CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+          else
+            git commit -m "track: ${{ steps.diff.outputs.summary || 'update' }}"
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+            git push
+          fi
+
+      - name: Open issue on change
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DATE=$(date -u +'%Y-%m-%d %H:%M UTC')
+          printf 'New WhatsApp beta changes detected at %s\n\n%s\n\nSee the latest files under `reports/`.\n' \
+            "$DATE" "${{ steps.diff.outputs.summary }}" > /tmp/issue.md
+          gh issue create \
+            --title "WhatsApp beta changes — $DATE" \
+            --body-file /tmp/issue.md

@@ -1,0 +1,9 @@
+# Build/work artifacts — never commit the binaries themselves.
+artifacts/
+incoming/
+decoded/
+*.apk
+*.dmg
+apktool.jar
+__pycache__/
+*.pyc

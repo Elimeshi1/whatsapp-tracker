@@ -1,0 +1,5 @@
+# Keep LF on everything the Linux/macOS runners execute.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
