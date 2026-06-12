@@ -76,7 +76,10 @@ repo but sends nothing.
    - `TELEGRAM_CHAT_ID` = your chat id
 
 You'll get one message per changed platform with the diff, plus the full report
-attached as a Markdown file.
+attached as a Markdown file. Messages use Telegram's **MarkdownV2** with
+**collapsible (expandable) blockquotes** — the per-section details stay tucked
+away and expand with one tap. The bot must be an admin of the target channel to
+post (for a private DM, use your own user id as `TELEGRAM_CHAT_ID`).
 
 ### Email (Gmail)
 

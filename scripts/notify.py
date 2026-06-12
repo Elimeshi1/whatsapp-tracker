@@ -41,34 +41,66 @@ def trunc(v: str, limit: int = 200) -> str:
 
 
 # ---------------------------------------------------------------- Telegram ---
+# Uses MarkdownV2 with collapsible (expandable) blockquotes — Telegram's
+# document-grade formatting. Details per section are tucked into an expandable
+# quote so the message is compact but fully inspectable with one tap.
+
+_MDV2_SPECIAL = set(r"_*[]()~`>#+-=|{}.!\\")
+
+
+def mdv2(s: str) -> str:
+    """Escape arbitrary text for Telegram MarkdownV2."""
+    return "".join("\\" + ch if ch in _MDV2_SPECIAL else ch for ch in (s or ""))
+
+
+def mdcode(s: str) -> str:
+    """Render text as an inline code span (only ` and \\ need escaping)."""
+    s = (s or "").replace("\\", "\\\\").replace("`", "\\`")
+    return f"`{s}`"
+
+
+def expandable_quote(lines: list) -> str:
+    """Wrap already-escaped single-line strings in an expandable blockquote."""
+    if not lines:
+        return ""
+    if len(lines) == 1:
+        return f"**>{lines[0]}||"
+    middle = [f">{l}" for l in lines[1:-1]]
+    return "\n".join([f"**>{lines[0]}", *middle, f">{lines[-1]}||"])
+
 
 def tg_render(run: dict) -> str:
-    """Build an HTML message for one platform run (Telegram HTML subset)."""
+    """Build a MarkdownV2 message for one platform run."""
     emoji = PLATFORM_EMOJI.get(run["platform"], "📱")
-    ve = f" · {run['version_extra']}" if run.get("version_extra") else ""
-    head = (f"{emoji} <b>WhatsApp {run['platform'].capitalize()} beta</b> "
-            f"v{html.escape(str(run['version']))}{html.escape(ve)}")
+    head = f"{emoji} *WhatsApp {run['platform'].capitalize()} beta* v{mdv2(str(run['version']))}"
+    if run.get("version_extra"):
+        head += f"\n_{mdv2(run['version_extra'])}_"
     if run.get("initial"):
         counts = ", ".join(f"{v} {k}" for k, v in run.get("counts", {}).items())
-        return head + f"\n\n<i>Initial baseline captured</i> ({html.escape(counts)})."
+        return head + f"\n\n_Initial baseline captured_ \\({mdv2(counts)}\\)\\."
 
-    lines = [head, ""]
-    for sec in run["sections"]:
-        title = html.escape(sec["title"])
-        a, c, r = sec["added"], sec["changed"], sec["removed"]
-        lines.append(f"<b>{title}</b> — ➕{len(a)} ✏️{len(c)} ➖{len(r)}")
-        for k, v in a.items():
-            lines.append(f"➕ <code>{html.escape(k)}</code>: {html.escape(trunc(v))}")
-        for k, (old, new) in c.items():
-            lines.append(f"✏️ <code>{html.escape(k)}</code>: "
-                         f"<s>{html.escape(trunc(old, 80))}</s> → {html.escape(trunc(new))}")
-        for k in r:
-            lines.append(f"➖ <code>{html.escape(k)}</code>")
-        lines.append("")
+    def build(with_details: bool) -> str:
+        parts = [head, ""]
+        for sec in run["sections"]:
+            a, c, r = sec["added"], sec["changed"], sec["removed"]
+            parts.append(f"*{mdv2(sec['title'])}* — ➕{len(a)} ✏️{len(c)} ➖{len(r)}")
+            if with_details:
+                detail = []
+                for k, v in a.items():
+                    detail.append(f"➕ {mdcode(k)}: {mdv2(trunc(v))}")
+                for k, (old, new) in c.items():
+                    detail.append(f"✏️ {mdcode(k)}: {mdv2(trunc(old, 80))} → {mdv2(trunc(new))}")
+                for k in r:
+                    detail.append(f"➖ {mdcode(k)}")
+                if detail:
+                    parts.append(expandable_quote(detail))
+            parts.append("")
+        return "\n".join(parts).rstrip()
 
-    text = "\n".join(lines).rstrip()
+    text = build(with_details=True)
     if len(text) > TG_LIMIT:
-        text = text[:TG_LIMIT].rstrip() + "\n\n… <i>full details in the attached report</i>"
+        # Re-render compact to avoid truncating mid-entity (breaks MarkdownV2).
+        text = build(with_details=False) + "\n\n_Full details in the attached report_\\."
     return text
 
 
@@ -82,7 +114,7 @@ def tg_post(token: str, method: str, data: bytes, headers: dict):
 def tg_send_message(token: str, chat_id: str, text: str):
     data = urllib.parse.urlencode({
         "chat_id": chat_id, "text": text,
-        "parse_mode": "HTML", "disable_web_page_preview": "true",
+        "parse_mode": "MarkdownV2", "disable_web_page_preview": "true",
     }).encode()
     return tg_post(token, "sendMessage", data,
                    {"Content-Type": "application/x-www-form-urlencoded"})
@@ -99,8 +131,7 @@ def tg_send_document(token: str, chat_id: str, filepath: Path, caption: str = ""
 
     field("chat_id", chat_id)
     if caption:
-        field("caption", caption)
-        field("parse_mode", "HTML")
+        field("caption", caption)  # plain text caption (no parse_mode)
     body.extend((f"--{boundary}\r\n"
                  f'Content-Disposition: form-data; name="document"; filename="{filepath.name}"\r\n'
                  f"Content-Type: text/markdown\r\n\r\n").encode())
