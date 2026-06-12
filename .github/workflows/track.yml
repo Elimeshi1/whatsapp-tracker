@@ -112,3 +112,5 @@ jobs:
           MAIL_HOST: ${{ secrets.MAIL_HOST }}
           MAIL_PORT: ${{ secrets.MAIL_PORT }}
         run: python3 scripts/notify.py
+
+# tracker: WhatsApp beta (Android + Mac)
