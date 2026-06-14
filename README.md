@@ -32,6 +32,13 @@ references the id we know exactly which feature the string belongs to. This is
 WhatsApp's *own* code layout — not a guessed topic. Strings referenced only by
 obfuscated code fall under `other …` (still split by shared word for structure).
 
+**macOS reuses these labels.** The Mac app has no groupable structure of its own
+— it stores UI text in opaque hash-keyed blobs (keys like `1aIk6g`, no
+namespaces), and its code isn't practically cross-referenceable. But WhatsApp
+ships the *same* English text on both platforms, so a Mac string that matches an
+Android one (placeholder-insensitive) inherits that Android module. In practice
+~15% of Mac strings map to a real module this way; the rest are word-clustered.
+
 **Why values, not keys?** WhatsApp strips resource *names* (apktool shows them as
 `APKTOOL_DUMMYVAL_0x…`) and the numeric ids are reassigned every build, so
 diffing by name is meaningless — every string looks "changed". Instead we diff

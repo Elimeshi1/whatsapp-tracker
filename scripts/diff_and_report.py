@@ -111,17 +111,41 @@ def classify_changes(added, removed):
     return new, reworded, removed_only
 
 
-def group_new_by_area(new_items, string_areas: dict):
+def build_area_index(extract_path: Path):
+    """Build a normalized-value -> module index from an extract's string_areas.
+
+    Lets one platform reuse another's code-derived module labels by matching the
+    *same English text*. Keyed on _norm (case/punctuation/placeholder-insensitive)
+    so e.g. Android "%1$s" and macOS "%1$@" variants still match. Short/ambiguous
+    strings are skipped to avoid mislabeling generic words like "OK"/"Done".
+    """
+    data = load_json(extract_path)
+    idx = {}
+    if not data:
+        return idx
+    for val, area in (data.get("string_areas") or {}).items():
+        k = _norm(val)
+        if len(k) >= 12 and k not in idx:
+            idx[k] = area
+    return idx
+
+
+def group_new_by_area(new_items, string_areas: dict, area_index: dict = None):
     """Group new strings by the real feature module that uses them.
 
     string_areas maps value -> module label (built in extract by cross-
-    referencing resource ids against readable com/whatsapp classes). Values with
-    no readable owner go into "· uncategorized". Returns a list of
-    {label, items} sorted by size, uncategorized last.
+    referencing resource ids against readable com/whatsapp classes — Android
+    only). When a string has no own label (e.g. macOS, which has no code to
+    cross-reference), fall back to area_index: the same module derived from the
+    identical Android string. Anything still unmatched goes to "· uncategorized".
+    Returns a list of {label, items} sorted by size, uncategorized last.
     """
     buckets = {}
     for v in new_items:
-        label = (string_areas or {}).get(v) or "· uncategorized"
+        label = (string_areas or {}).get(v)
+        if not label and area_index:
+            label = area_index.get(_norm(v))
+        label = label or "· uncategorized"
         buckets.setdefault(label, []).append(v)
     groups = [{"label": k, "items": v} for k, v in buckets.items()]
     groups.sort(key=lambda g: (g["label"].startswith("·"), -len(g["items"]), g["label"]))
@@ -192,7 +216,7 @@ def render_report(platform, new_data, prev_version, initial: bool, d: dict) -> s
     return "\n".join(lines)
 
 
-def process_platform(platform: str, extract_path: Path):
+def process_platform(platform: str, extract_path: Path, area_index: dict = None):
     new_data = load_json(extract_path)
     if not new_data:
         print(f"== {platform}: no extract data, skipping")
@@ -231,7 +255,7 @@ def process_platform(platform: str, extract_path: Path):
             sorted(new_set - old_set), sorted(old_set - new_set))
         d = {
             "new": new_items,
-            "new_groups": group_new_by_area(new_items, string_areas),
+            "new_groups": group_new_by_area(new_items, string_areas, area_index),
             "reworded": reworded,
             "removed": removed_only,
             "new_components": sorted(new_comp - old_comp),
@@ -317,10 +341,16 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):
         pass
+    # Android strings carry code-derived module labels; reuse them to label
+    # identical macOS strings (which have no module structure of their own).
+    area_index = build_area_index(INCOMING / "android-extract" / "android-extract.json")
+    if area_index:
+        print(f"== cross-platform module index: {len(area_index)} labeled strings")
+
     results = []
     for platform in ("android", "mac"):
         extract_path = INCOMING / f"{platform}-extract" / f"{platform}-extract.json"
-        res = process_platform(platform, extract_path)
+        res = process_platform(platform, extract_path, area_index)
         if res:
             results.append(res)
 
