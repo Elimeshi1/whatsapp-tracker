@@ -49,7 +49,7 @@ like WABetaInfo watch.
 ## How it works
 
 ```
-schedule (every 6h) ─┬─ android job (ubuntu): download APK → apktool decode (resources)
+schedule (every 3h) ─┬─ android job (ubuntu): download APK → apktool decode (resources)
                      │                        + baksmali (code) → extract JSON
                      └─ macos  job (macos):  download DMG → mount → extract JSON
                               │

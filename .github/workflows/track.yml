@@ -2,8 +2,8 @@ name: WhatsApp Beta Tracker
 
 on:
   schedule:
-    # Every 6 hours. Adjust as you like (cron is in UTC).
-    - cron: "0 */6 * * *"
+    # Every 3 hours. Adjust as you like (cron is in UTC).
+    - cron: "0 */3 * * *"
   workflow_dispatch:
     inputs:
       apk_url:
