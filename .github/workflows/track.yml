@@ -30,10 +30,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Download apktool
+      - name: Download apktool & baksmali
         run: |
           curl -fSL -o apktool.jar \
             https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar
+          curl -fSL -o baksmali.jar \
+            https://github.com/baksmali/smali/releases/download/v2.5.2/baksmali-2.5.2.jar
 
       - name: Download WhatsApp beta APK
         env:
@@ -43,8 +45,20 @@ jobs:
       - name: Decode resources (no smali = fast)
         run: java -jar apktool.jar d -s -f -o decoded artifacts/WhatsApp.apk
 
+      - name: Disassemble code (maps each string to its feature module)
+        # baksmali turns the dex into smali so extract can tie a string's
+        # resource id to the readable com/whatsapp class that references it.
+        # Non-fatal: if it fails, extraction proceeds without module labels.
+        continue-on-error: true
+        run: |
+          mkdir -p smali
+          for dex in decoded/classes*.dex; do
+            java -jar baksmali.jar d "$dex" -o smali || true
+          done
+          echo "smali classes: $(find smali -name '*.smali' | wc -l)"
+
       - name: Extract strings & flags
-        run: python3 scripts/extract_android.py decoded artifacts/android-extract.json
+        run: python3 scripts/extract_android.py decoded artifacts/android-extract.json smali
 
       - uses: actions/upload-artifact@v4
         with:

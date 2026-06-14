@@ -129,6 +129,30 @@ def group_components(comps):
     return sorted(groups.items())
 
 
+def new_text_sections(run: dict):
+    """Return [(label, [values...]), ...] for the new texts.
+
+    Prefers the real feature modules from new_groups (built in extract by tying
+    each string's resource id to the readable class that uses it). Strings with
+    no readable owner ("· uncategorized") are still split by their shared word so
+    they keep some structure — but labeled "other · …" so it's clear they're a
+    heuristic, not WhatsApp's own module. Falls back to pure word-clustering when
+    new_groups is absent (e.g. macOS, which has no code cross-reference).
+    """
+    groups = run.get("new_groups")
+    out = []
+    if groups:
+        for g in groups:
+            if g["label"].startswith("·"):
+                for sub, items in auto_group(g["items"]):
+                    out.append(("other" if sub == "Other" else f"other · {sub.lower()}", items))
+            else:
+                out.append((g["label"], g["items"]))
+    else:
+        out = list(auto_group(run.get("new", [])))
+    return out
+
+
 def _run_header(run: dict) -> str:
     emoji = PLATFORM_EMOJI.get(run["platform"], "📱")
     ver = esc(str(run["version"]))
@@ -177,7 +201,7 @@ def _run_sections(run: dict):
     """Collapsed (label, [<li> html, ...]) sections: new texts in automatic
     word-clusters, then reworded and removed."""
     secs = []
-    for label, items in auto_group(run.get("new", [])):
+    for label, items in new_text_sections(run):
         secs.append((f"🆕 {label}", [f"<li>{esc(trunc(v, 260))}</li>" for v in items]))
     rew = run.get("reworded", [])
     if rew:
@@ -251,7 +275,7 @@ def basic_html(run: dict) -> str:
         for pkg, items in group_components(nc):
             names = ", ".join(short_component(c).split(".")[-1] for c in items)
             lines.append(f"• <b>{esc(pkg)}</b> — {esc(names)}")
-    for label, items in auto_group(run.get("new", []))[:6]:
+    for label, items in new_text_sections(run)[:6]:
         lines.append(f"\n<b>🆕 {esc(label)}:</b>")
         lines += [f"• {esc(trunc(v))}" for v in items[:8]]
     return "\n".join(lines)[:TG_LIMIT]
@@ -333,7 +357,7 @@ def html_run(run: dict) -> str:
         out.append("</ul>")
     if new:
         out.append(f"<p style='margin:14px 0 4px;color:#137333'><b>🆕 New texts — possible new features ({len(new)})</b></p>")
-        for label, items in auto_group(new):
+        for label, items in new_text_sections(run):
             out.append(f"<p style='margin:8px 0 2px'><b>{html.escape(label)}</b> ({len(items)})</p><ul style='margin:0'>")
             out += [f"<li>{html.escape(trunc(v, 400))}</li>" for v in items]
             out.append("</ul>")

@@ -111,6 +111,23 @@ def classify_changes(added, removed):
     return new, reworded, removed_only
 
 
+def group_new_by_area(new_items, string_areas: dict):
+    """Group new strings by the real feature module that uses them.
+
+    string_areas maps value -> module label (built in extract by cross-
+    referencing resource ids against readable com/whatsapp classes). Values with
+    no readable owner go into "· uncategorized". Returns a list of
+    {label, items} sorted by size, uncategorized last.
+    """
+    buckets = {}
+    for v in new_items:
+        label = (string_areas or {}).get(v) or "· uncategorized"
+        buckets.setdefault(label, []).append(v)
+    groups = [{"label": k, "items": v} for k, v in buckets.items()]
+    groups.sort(key=lambda g: (g["label"].startswith("·"), -len(g["items"]), g["label"]))
+    return groups
+
+
 def version_extra(platform: str, data: dict) -> str:
     if platform == "android" and data.get("versionCode"):
         return f"versionCode {data['versionCode']}"
@@ -153,7 +170,21 @@ def render_report(platform, new_data, prev_version, initial: bool, d: dict) -> s
     code = lambda x: f"`{x}`"
     section("🧩 New screens / features", d["new_components"], code)
     section("🔐 New permissions", d["new_permissions"], code)
-    section("🆕 New texts — possible new features", d["new"], fmt_val)
+
+    # New texts, grouped by the real feature module that uses them.
+    groups = d.get("new_groups")
+    if groups:
+        lines.append(f"## 🆕 New texts — possible new features ({len(d['new'])})")
+        lines.append("")
+        for g in groups:
+            label = "uncategorized" if g["label"].startswith("·") else g["label"]
+            lines.append(f"### `{label}` ({len(g['items'])})")
+            lines.append("")
+            lines.extend(f"- {fmt_val(i)}" for i in g["items"])
+            lines.append("")
+    else:
+        section("🆕 New texts — possible new features", d["new"], fmt_val)
+
     section("✏️ Reworded — existing text, minor changes", d["reworded"],
             lambda p: f"{fmt_val(p[0])}  →  {fmt_val(p[1])}")
     section("➖ Removed texts", d["removed"], fmt_val)
@@ -180,8 +211,11 @@ def process_platform(platform: str, extract_path: Path):
     new_perm = as_values(new_data.get("permissions"))
 
     version = new_data.get("version") or "unknown"
+    # Pull areas out for labeling, but don't persist them in the committed
+    # baseline/snapshot (5k+ entries; only needed transiently for this diff).
+    string_areas = new_data.pop("string_areas", None) or {}
     if initial:
-        d = {"new": [], "reworded": [], "removed": [],
+        d = {"new": [], "new_groups": [], "reworded": [], "removed": [],
              "new_components": [], "removed_components": [], "new_permissions": [], "removed_permissions": []}
         has_changes = True
     else:
@@ -189,6 +223,7 @@ def process_platform(platform: str, extract_path: Path):
             sorted(new_set - old_set), sorted(old_set - new_set))
         d = {
             "new": new_items,
+            "new_groups": group_new_by_area(new_items, string_areas),
             "reworded": reworded,
             "removed": removed_only,
             "new_components": sorted(new_comp - old_comp),

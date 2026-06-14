@@ -17,8 +17,20 @@ something changes — laid out inline and readable.
 
 | Platform | Source | Extracted |
 |----------|--------|-----------|
-| Android  | WhatsApp's self-hosted APK (or a manual APK URL you pass in) | the set of human-readable `strings.xml` values |
+| Android  | WhatsApp's self-hosted APK (or a manual APK URL you pass in) | the set of human-readable `strings.xml` values, **each tied to the WhatsApp feature module that uses it** (see below), plus manifest components/permissions |
 | macOS    | Official beta endpoint `?configuration=Beta` → `.dmg` | string values from English/Base `*.strings` and `*.loctable` |
+
+### Where each Android string belongs
+
+New texts aren't just dumped in a flat list — each is attributed to the **real
+feature module** it lives in (e.g. `companiondevice`, `registration`,
+`payments/indiaupi`, `offload`). WhatsApp strips resource *names*, but the dummy
+name embeds the resource id (`0x7f12abcd`), and that id appears as a constant in
+the bytecode wherever the string is used. Most classes are obfuscated (`X/…`),
+but ~4k keep readable paths (`com/whatsapp/<module>/…`), so when a readable class
+references the id we know exactly which feature the string belongs to. This is
+WhatsApp's *own* code layout — not a guessed topic. Strings referenced only by
+obfuscated code fall under `other …` (still split by shared word for structure).
 
 **Why values, not keys?** WhatsApp strips resource *names* (apktool shows them as
 `APKTOOL_DUMMYVAL_0x…`) and the numeric ids are reassigned every build, so
@@ -30,7 +42,8 @@ like WABetaInfo watch.
 ## How it works
 
 ```
-schedule (every 6h) ─┬─ android job (ubuntu): download APK → apktool decode → extract JSON
+schedule (every 6h) ─┬─ android job (ubuntu): download APK → apktool decode (resources)
+                     │                        + baksmali (code) → extract JSON
                      └─ macos  job (macos):  download DMG → mount → extract JSON
                               │
                               └─ report job: diff vs data/<platform>/latest.json
@@ -85,8 +98,10 @@ You'll get one message per changed platform. Messages use Telegram's
 **Rich Messages** (`sendRichMessage`, Bot API 10.1) — an HTML document where the
 **🧩 new screens/features are shown inline** (always visible), grouped by their
 class package (`companiondevice`, `offload`, …). The new texts are
-**auto-clustered by their most common shared word** (labels emerge from the data
-— no predefined topic list) inside **collapsed `<details>` sections**, along with
+**grouped by the WhatsApp feature module that actually uses each string**
+(from the code cross-reference above — `companiondevice`, `registration`,
+`payments/indiaupi`, …; strings with no readable owner fall under `other …`)
+inside **collapsed `<details>` sections**, along with
 ✏️ Reworded and ➖ Removed. Nothing is expanded by default; tap to open.
 Cosmetic-only changes (punctuation/case) are dropped, not shown as reworded. The
 whole diff is inline (no file), split across multiple messages only for very
@@ -126,10 +141,13 @@ Cloudflare-gated, so you may need a direct CDN link rather than the page URL.
 ## Running locally (optional)
 
 ```bash
-# Android (needs Java + apktool.jar — same version pinned in the workflow)
+# Android (needs Java + apktool.jar + baksmali.jar — versions pinned in the workflow)
 bash scripts/download_android.sh artifacts
 java -jar apktool.jar d -s -f -o decoded artifacts/WhatsApp.apk
-python3 scripts/extract_android.py decoded artifacts/android-extract.json
+# Disassemble code so strings can be tied to their feature module (optional but
+# recommended — omit the smali arg to skip module labels):
+for dex in decoded/classes*.dex; do java -jar baksmali.jar d "$dex" -o smali; done
+python3 scripts/extract_android.py decoded artifacts/android-extract.json smali
 
 # macOS (run on a Mac)
 bash scripts/download_mac.sh artifacts
