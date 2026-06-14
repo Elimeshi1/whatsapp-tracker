@@ -200,7 +200,15 @@ def process_platform(platform: str, extract_path: Path):
 
     baseline_path = DATA / platform / "latest.json"
     old_data = load_json(baseline_path)
-    initial = old_data is None
+    # A schema change means the extractor now captures a different (usually much
+    # larger) set of strings — diffing against the old baseline would report
+    # thousands of bogus "new" texts. Treat it as a fresh baseline instead.
+    schema_changed = (old_data is not None
+                      and old_data.get("schema") != new_data.get("schema"))
+    if schema_changed:
+        print(f"== {platform}: extract schema changed "
+              f"({old_data.get('schema')} → {new_data.get('schema')}); resetting baseline")
+    initial = old_data is None or schema_changed
     prev_version = (old_data or {}).get("version")
 
     old_set = as_values((old_data or {}).get("strings"))

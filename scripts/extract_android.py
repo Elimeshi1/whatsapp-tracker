@@ -193,6 +193,7 @@ def main() -> int:
     string_areas = build_string_areas(id2val, smali_dir) if smali_dir else {}
     data = {
         "platform": "android",
+        "schema": 2,  # bumped when extraction changes; mismatch = baseline reset
         "package": "com.whatsapp",
         "version": version["versionName"],
         "versionCode": version["versionCode"],

@@ -33,11 +33,44 @@ def has_letter(s: str) -> bool:
     return any(ch.isalpha() for ch in s)
 
 
+# Bidi control marks WhatsApp wraps every value with (U+200E LRM etc.); strip so
+# values compare/display cleanly.
+_BIDI = dict.fromkeys(
+    map(ord, "‎‏‪‫‬‭‮⁦⁧⁨⁩"),
+    None,
+)
+
+
 def clean(text: str) -> str:
-    t = text.strip().replace("\\'", "'").replace('\\"', '"')
+    t = text.translate(_BIDI).strip().replace("\\'", "'").replace('\\"', '"')
     if len(t) >= 2 and t[0] == '"' and t[-1] == '"':
         t = t[1:-1].strip()
     return t
+
+
+def collect_localite(path: Path, out: set):
+    """Extract values from WhatsApp's custom `.localite.values` blob.
+
+    Format: a zero-padded header, then UTF-8 string values each terminated by a
+    NUL byte (and prefixed with a U+200E mark). This holds the *English source*
+    UI — the main app keeps no standard en Localizable.strings, so this is where
+    almost all texts live. Keys live in the sibling `.meta`, which we don't need
+    (we diff values).
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        print(f"WARN: could not read {path}: {exc}", file=sys.stderr)
+        return
+    for chunk in raw.split(b"\x00"):
+        if not chunk:
+            continue
+        try:
+            t = clean(chunk.decode("utf-8"))
+        except UnicodeDecodeError:
+            continue
+        if len(t) >= 2 and has_letter(t):
+            out.add(t)
 
 
 def collect_values(obj, out: set, prefer_locales=("en", "Base", "en_US")):
@@ -100,13 +133,22 @@ def main() -> int:
         meta = bundle_version(app)
         resources = app / "Contents" / "Resources"
 
-        # English/Base locales carry the source texts; other locales are translations.
-        wanted_dirs = ["en.lproj", "Base.lproj", "en_US.lproj"]
+        en_lprojs = ("en.lproj", "Base.lproj", "en_US.lproj")
+
+        # The bulk of the English UI lives in WhatsApp's custom `.localite.values`
+        # blobs (the main bundle + frameworks like SharedModules) — English has
+        # no standard Localizable.strings. Parse every English-locale one.
+        localite = [f for f in app.rglob("*.localite.values")
+                    if f.parent.name in en_lprojs]
+        for f in localite:
+            collect_localite(f, strings)
+
+        # Standard .strings / .loctable still carry InfoPlist permission text and
+        # extension strings — keep them too.
         candidates = []
-        for d in wanted_dirs:
+        for d in en_lprojs:
             candidates += list((resources / d).glob("*.strings"))
-        candidates += list(resources.glob("*.loctable"))
-        candidates += list(resources.rglob("*.loctable"))
+        candidates += list(app.rglob("*.loctable"))
 
         seen = set()
         for f in candidates:
@@ -114,12 +156,15 @@ def main() -> int:
                 continue
             seen.add(f)
             collect_values(plutil_to_obj(f), strings)
+        print(f"==> sources: {len(localite)} localite blob(s) + "
+              f"{len(seen)} .strings/.loctable files")
     finally:
         subprocess.run(["hdiutil", "detach", str(mount), "-quiet", "-force"],
                        capture_output=True, text=True)
 
     data = {
         "platform": "mac",
+        "schema": 2,  # bumped when extraction changes; mismatch = baseline reset
         "version": meta["version"],
         "build": meta["build"],
         "strings": sorted(strings),

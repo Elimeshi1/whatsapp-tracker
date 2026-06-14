@@ -74,9 +74,6 @@ jobs:
       - name: Download WhatsApp Mac beta
         run: bash scripts/download_mac.sh artifacts
 
-      - name: Inventory localization files (diagnostic)
-        run: bash scripts/inspect_mac.sh artifacts/WhatsApp-mac.dmg
-
       - name: Extract strings
         run: python3 scripts/extract_mac.py artifacts/WhatsApp-mac.dmg artifacts/mac-extract.json
 
