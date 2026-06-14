@@ -18,7 +18,7 @@ something changes — laid out inline and readable.
 | Platform | Source | Extracted |
 |----------|--------|-----------|
 | Android  | WhatsApp's self-hosted APK (or a manual APK URL you pass in) | the set of human-readable `strings.xml` values, **each tied to the WhatsApp feature module that uses it** (see below), plus manifest components/permissions |
-| macOS    | Official beta endpoint `?configuration=Beta` → `.dmg` | string values from English/Base `*.strings` and `*.loctable` |
+| macOS    | Official beta endpoint `?configuration=Beta` → `.dmg` | English UI values from WhatsApp's custom `*.localite.values` blobs (the main bundle keeps no standard English `Localizable.strings`), plus `*.strings`/`*.loctable` for InfoPlist/permission text |
 
 ### Where each Android string belongs
 
