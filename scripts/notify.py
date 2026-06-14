@@ -1,31 +1,26 @@
 #!/usr/bin/env python3
-"""Send formatted change notifications via Telegram and/or email.
+"""Send formatted change notifications via Telegram.
 
 Reads notify.json (produced by diff_and_report.py) and, for each platform that
 changed, sends a clear message showing exactly what was added / changed /
-removed, with the full Markdown report attached.
+removed — the whole diff inline.
 
-Channels are enabled purely by presence of secrets (set as env vars):
+Enabled purely by presence of secrets (set as env vars):
 
   Telegram:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-  Email:     MAIL_USERNAME, MAIL_PASSWORD, MAIL_TO
-             (optional: MAIL_HOST=smtp.gmail.com, MAIL_PORT=465, MAIL_FROM)
 
-If no channel is configured it prints a notice and exits 0 (never fails the run).
-Set NOTIFY_DRY_RUN=1 to render to stdout/files instead of sending.
+If it isn't configured it prints a notice and exits 0 (never fails the run).
+Set NOTIFY_DRY_RUN=1 to render to stdout instead of sending.
 
 Stdlib only. Usage: notify.py [notify.json]
 """
-import html
 import json
 import os
 import re
-import smtplib
 import sys
 import urllib.parse
 import urllib.request
 from collections import Counter
-from email.message import EmailMessage
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -325,106 +320,6 @@ def send_telegram(payload: dict):
     print("Telegram: sent" if not DRY else "Telegram: dry-run rendered")
 
 
-# ------------------------------------------------------------------- Email ---
-
-def html_run(run: dict) -> str:
-    emoji = PLATFORM_EMOJI.get(run["platform"], "📱")
-    ve = f" &middot; {html.escape(run['version_extra'])}" if run.get("version_extra") else ""
-    out = [f"<h2 style='margin:18px 0 6px'>{emoji} WhatsApp {run['platform'].capitalize()} "
-           f"beta v{html.escape(str(run['version']))}{ve}</h2>"]
-    prev = run.get("prev_version")
-    if prev and not run.get("initial"):
-        out.append(f"<p style='color:#5f6368;margin:0 0 8px'>compared against v{html.escape(str(prev))}</p>")
-    if run.get("initial"):
-        texts = run.get("counts", {}).get("texts", 0)
-        out.append(f"<p><i>Initial baseline captured</i> ({texts} texts).</p>")
-        return "\n".join(out)
-
-    new_components = run.get("new_components", [])
-    new_permissions = run.get("new_permissions", [])
-    new = run.get("new", [])
-    reworded = run.get("reworded", [])
-    removed = run.get("removed", [])
-    if new_components:
-        out.append(f"<p style='margin:10px 0 4px;color:#1a73e8'><b>🧩 New screens / features ({len(new_components)})</b></p><ul style='margin:0'>")
-        for pkg, items in group_components(new_components):
-            names = ", ".join(short_component(c).split(".")[-1] for c in items)
-            out.append(f"<li><b>{html.escape(pkg)}</b> — {html.escape(names)}</li>")
-        out.append("</ul>")
-    if new_permissions:
-        out.append(f"<p style='margin:10px 0 4px;color:#1a73e8'><b>🔐 New permissions ({len(new_permissions)})</b></p><ul style='margin:0'>")
-        out += [f"<li><code>{html.escape(short_component(p))}</code></li>" for p in new_permissions]
-        out.append("</ul>")
-    if new:
-        out.append(f"<p style='margin:14px 0 4px;color:#137333'><b>🆕 New texts — possible new features ({len(new)})</b></p>")
-        for label, items in new_text_sections(run):
-            out.append(f"<p style='margin:8px 0 2px'><b>{html.escape(label)}</b> ({len(items)})</p><ul style='margin:0'>")
-            out += [f"<li>{html.escape(trunc(v, 400))}</li>" for v in items]
-            out.append("</ul>")
-    if reworded:
-        out.append(f"<p style='margin:10px 0 4px;color:#b06000'><b>✏️ Reworded — existing text, minor changes ({len(reworded)})</b></p><ul style='margin:0'>")
-        out += [f"<li>{html.escape(trunc(o, 200))} <span style='color:#888'>→</span> {html.escape(trunc(n, 300))}</li>"
-                for o, n in reworded]
-        out.append("</ul>")
-    if removed:
-        out.append(f"<p style='margin:10px 0 4px;color:#c5221f'><b>➖ Removed texts ({len(removed)})</b></p><ul style='margin:0'>")
-        out += [f"<li>{html.escape(trunc(v, 400))}</li>" for v in removed]
-        out.append("</ul>")
-    return "\n".join(out)
-
-
-def build_email_html(payload: dict) -> str:
-    body = "\n".join(html_run(r) for r in payload["runs"])
-    return (f"<div style='font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;"
-            f"font-size:14px;color:#202124;max-width:720px'>"
-            f"<p style='color:#5f6368'>WhatsApp beta tracker · {html.escape(payload['generated'])}</p>"
-            f"{body}"
-            f"<hr style='margin-top:24px;border:none;border-top:1px solid #eee'>"
-            f"<p style='color:#9aa0a6;font-size:12px'>Full reports are attached as Markdown.</p></div>")
-
-
-def send_email(payload: dict):
-    user = os.environ.get("MAIL_USERNAME", "dry@example.com")
-    password = os.environ.get("MAIL_PASSWORD", "DRY")
-    to_addr = os.environ.get("MAIL_TO", "dry@example.com")
-    host = os.environ.get("MAIL_HOST", "smtp.gmail.com")
-    port = int(os.environ.get("MAIL_PORT", "465"))
-    from_addr = os.environ.get("MAIL_FROM", user)
-
-    subject = "WhatsApp beta changes: " + "; ".join(
-        f"{r['platform']} v{r['version']}" for r in payload["runs"])
-
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = from_addr
-    msg["To"] = to_addr
-    msg.set_content("This is an HTML email. See the changes in an HTML-capable client.")
-    msg.add_alternative(build_email_html(payload), subtype="html")
-
-    for run in payload["runs"]:
-        report = ROOT / run["report"]
-        if report.exists():
-            msg.add_attachment(report.read_bytes(), maintype="text", subtype="markdown",
-                               filename=report.name)
-
-    if DRY:
-        out = ROOT / "notify_email_preview.html"
-        out.write_text(build_email_html(payload), encoding="utf-8")
-        print(f"\n----- EMAIL -----\nSubject: {subject}\nTo: {to_addr}\nHTML preview -> {out}")
-        return
-
-    if port == 465:
-        with smtplib.SMTP_SSL(host, port, timeout=30) as s:
-            s.login(user, password)
-            s.send_message(msg)
-    else:
-        with smtplib.SMTP(host, port, timeout=30) as s:
-            s.starttls()
-            s.login(user, password)
-            s.send_message(msg)
-    print("Email: sent")
-
-
 # -------------------------------------------------------------------- main ---
 
 def main() -> int:
@@ -442,22 +337,15 @@ def main() -> int:
         return 0
 
     tg_ok = bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"))
-    mail_ok = all(os.environ.get(k) for k in ("MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_TO"))
 
-    if not (tg_ok or mail_ok) and not DRY:
-        print("notify: no channel configured (set TELEGRAM_* and/or MAIL_* secrets). Skipping.")
+    if not tg_ok and not DRY:
+        print("notify: Telegram not configured (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID). Skipping.")
         return 0
 
-    if tg_ok or DRY:
-        try:
-            send_telegram(payload)
-        except Exception as exc:  # noqa: BLE001
-            print(f"notify: Telegram failed: {exc}", file=sys.stderr)
-    if mail_ok or DRY:
-        try:
-            send_email(payload)
-        except Exception as exc:  # noqa: BLE001
-            print(f"notify: email failed: {exc}", file=sys.stderr)
+    try:
+        send_telegram(payload)
+    except Exception as exc:  # noqa: BLE001
+        print(f"notify: Telegram failed: {exc}", file=sys.stderr)
     return 0
 
 
