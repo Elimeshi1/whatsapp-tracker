@@ -24,6 +24,7 @@ import smtplib
 import sys
 import urllib.parse
 import urllib.request
+from collections import Counter
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -68,53 +69,64 @@ def _detail(summary_label: str, items_html: str) -> str:
     return f"<details><summary><b>{summary_label}</b></summary><ul>{items_html}</ul></details>"
 
 
-# Topic buckets for grouping new texts/screens. Order = display priority.
-# Single-word keywords match whole words; multi-word keywords match as substrings.
-THEMES = [
-    ("🔑 Passkey & login", ("passkey", "log in", "login", "log out", "logout", "face", "fingerprint",
-                            "screen lock", "verification code", "qr code", "linking", "pair", "pairing",
-                            "companion", "device", "shortcake")),
-    ("☁️ Backup & storage", ("backup", "restore", "cloud", "storage", "offload")),
-    ("💳 Payments", ("payment", "payments", "pay on", "bank", "wallet", "e-wallet", "clabe", "iban",
-                     "receipt", "checkout", "pix", "card")),
-    ("📞 Calls", ("call", "calls", "calling", "video", "ringtone", "guest", "guests")),
-    ("👥 Groups & communities", ("group", "groups", "community", "communities", "member", "members",
-                                 "participant", "invite")),
-    ("📢 Channels", ("channel", "channels", "follower", "followers")),
-    ("📅 Calendar & events", ("calendar", "event", "events")),
-    ("⏳ Disappearing messages", ("disappear", "disappearing", "timer")),
-    ("🧒 Parental & managed accounts", ("parent", "parents", "parental", "child", "guardian",
-                                       "managed", "sponsor")),
-    ("🤖 Meta AI", ("meta ai", "restyle", "generate an image")),
-    ("🔒 Privacy & security", ("privacy", "private processing", "security", "encrypt", "encrypted", "block")),
-    ("🔔 Notifications", ("notification", "notifications", "notify", "alert", "alerts")),
-    ("👤 Profile & username", ("username", "profile", "avatar")),
-    ("⚙️ Admin & settings", ("admin", "admins", "setting", "settings", "permission", "permissions")),
-    ("💬 Chats & messages", ("chat", "chats", "message", "messages", "status", "react", "reaction",
-                            "poll", "sticker", "emoji")),
-]
-OTHER = "📦 Other"
+# Grammatical / filler words ignored when auto-clustering texts by shared word.
+_STOP = set("""the a an and or to of for is are be been will would can could should you your yours this that
+these those it its from as at by was were if but so no not yes when then we our us they them their he she his
+her i me my mine do does did have has had get got now more all any some one only just please try again tap go
+see use used make sure need want let via with about into than too also new whatsapp couldn didn doesn won isn
+aren wasn don wouldn shouldn hasn haven wont cant what which who how why here there add set onto your
+href http https www html font face span learn more about back next done okay""".split())
 
 
-def theme_of(text: str) -> str:
-    low = text.lower()
-    words = set(re.findall(r"[a-z']+", low))
-    for label, kws in THEMES:
-        for k in kws:
-            if (" " in k and k in low) or (" " not in k and k in words):
-                return label
-    return OTHER
+def _stem(w: str) -> str:
+    """Crude singularizer so message/messages cluster together."""
+    if len(w) > 4 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
+        return w[:-1]
+    return w
 
 
-def group_by_theme(values):
-    """Return [(theme_label, [values...]), ...] in THEME priority order, Other last."""
+def _word_list(s: str):
+    return [w for w in re.findall(r"[a-z]+", s.lower()) if len(w) >= 4 and w not in _STOP]
+
+
+def auto_group(values, min_size=3):
+    """Cluster values automatically by their most frequent shared content word.
+
+    Labels emerge from the data (no predefined list): each value is attached to
+    the most common (singularized) word it contains; words shared by < min_size
+    values fall to "Other". Returns [(label, [values...]), ...], largest first.
+    """
+    docs = [(v, _word_list(v)) for v in values]
+    freq = Counter()
+    for _, ws in docs:
+        freq.update({_stem(w) for w in ws})
+    assigned = [False] * len(docs)
+    groups = []
+    for stem, count in freq.most_common():
+        if count < min_size:
+            break
+        members = [i for i, (_, ws) in enumerate(docs)
+                   if not assigned[i] and stem in {_stem(w) for w in ws}]
+        if len(members) >= min_size:
+            for i in members:
+                assigned[i] = True
+            # Label with the most common surface form mapping to this stem.
+            surface = Counter(w for i in members for w in docs[i][1] if _stem(w) == stem)
+            groups.append((surface.most_common(1)[0][0].capitalize(),
+                           [docs[i][0] for i in members]))
+    other = [v for i, (v, _) in enumerate(docs) if not assigned[i]]
+    if other:
+        groups.append(("Other", other))
+    return groups
+
+
+def group_components(comps):
+    """Group component class names by their first package segment (file-based)."""
     groups = {}
-    for v in values:
-        groups.setdefault(theme_of(v), []).append(v)
-    ordered = [(lbl, groups[lbl]) for lbl, _ in THEMES if lbl in groups]
-    if OTHER in groups:
-        ordered.append((OTHER, groups[OTHER]))
-    return ordered
+    for c in comps:
+        seg = c.replace("com.whatsapp.", "").split(".")[0] or "(root)"
+        groups.setdefault(seg, []).append(c)
+    return sorted(groups.items())
 
 
 def _run_header(run: dict) -> str:
@@ -145,15 +157,15 @@ def _summary_line(run: dict) -> str:
 
 
 def _visible_screens(run: dict) -> str:
-    """New screens/permissions shown as an always-visible list (not collapsed)."""
+    """New screens/permissions shown inline (not collapsed), grouped by package."""
     out = ""
     nc = run.get("new_components", [])
     if nc:
-        shown = nc[:25]
-        lis = "".join(f"<li><code>{esc(short_component(c))}</code></li>" for c in shown)
-        if len(nc) > len(shown):
-            lis += f"<li>… +{len(nc) - len(shown)} more (in the repo report)</li>"
-        out += f"<p><b>🧩 New screens / features ({len(nc)})</b></p><ul>{lis}</ul>"
+        out += f"<p><b>🧩 New screens / features ({len(nc)})</b></p><ul>"
+        for pkg, items in group_components(nc):
+            names = ", ".join(short_component(c).split(".")[-1] for c in items)
+            out += f"<li><b>{esc(pkg)}</b> — {esc(names)}</li>"
+        out += "</ul>"
     np = run.get("new_permissions", [])
     if np:
         lis = "".join(f"<li><code>{esc(short_component(p))}</code></li>" for p in np)
@@ -162,11 +174,11 @@ def _visible_screens(run: dict) -> str:
 
 
 def _run_sections(run: dict):
-    """Collapsed (label, [<li> html, ...]) sections: new texts grouped by topic,
-    then reworded and removed."""
+    """Collapsed (label, [<li> html, ...]) sections: new texts in automatic
+    word-clusters, then reworded and removed."""
     secs = []
-    for tlabel, items in group_by_theme(run.get("new", [])):
-        secs.append((tlabel, [f"<li>{esc(trunc(v, 260))}</li>" for v in items]))
+    for label, items in auto_group(run.get("new", [])):
+        secs.append((f"🆕 {label}", [f"<li>{esc(trunc(v, 260))}</li>" for v in items]))
     rew = run.get("reworded", [])
     if rew:
         secs.append(("✏️ Reworded — minor text changes",
@@ -236,9 +248,11 @@ def basic_html(run: dict) -> str:
                  f"✏️ {len(run.get('reworded', []))} reworded · ➖ {len(run.get('removed', []))} removed")
     if nc:
         lines.append("\n<b>🧩 New screens:</b>")
-        lines += [f"• <code>{esc(short_component(c))}</code>" for c in nc[:20]]
-    for tlabel, items in group_by_theme(run.get("new", []))[:6]:
-        lines.append(f"\n<b>{tlabel}:</b>")
+        for pkg, items in group_components(nc):
+            names = ", ".join(short_component(c).split(".")[-1] for c in items)
+            lines.append(f"• <b>{esc(pkg)}</b> — {esc(names)}")
+    for label, items in auto_group(run.get("new", []))[:6]:
+        lines.append(f"\n<b>🆕 {esc(label)}:</b>")
         lines += [f"• {esc(trunc(v))}" for v in items[:8]]
     return "\n".join(lines)[:TG_LIMIT]
 
@@ -309,7 +323,9 @@ def html_run(run: dict) -> str:
     removed = run.get("removed", [])
     if new_components:
         out.append(f"<p style='margin:10px 0 4px;color:#1a73e8'><b>🧩 New screens / features ({len(new_components)})</b></p><ul style='margin:0'>")
-        out += [f"<li><code>{html.escape(short_component(c))}</code></li>" for c in new_components]
+        for pkg, items in group_components(new_components):
+            names = ", ".join(short_component(c).split(".")[-1] for c in items)
+            out.append(f"<li><b>{html.escape(pkg)}</b> — {html.escape(names)}</li>")
         out.append("</ul>")
     if new_permissions:
         out.append(f"<p style='margin:10px 0 4px;color:#1a73e8'><b>🔐 New permissions ({len(new_permissions)})</b></p><ul style='margin:0'>")
@@ -317,8 +333,8 @@ def html_run(run: dict) -> str:
         out.append("</ul>")
     if new:
         out.append(f"<p style='margin:14px 0 4px;color:#137333'><b>🆕 New texts — possible new features ({len(new)})</b></p>")
-        for tlabel, items in group_by_theme(new):
-            out.append(f"<p style='margin:8px 0 2px'><b>{tlabel}</b> ({len(items)})</p><ul style='margin:0'>")
+        for label, items in auto_group(new):
+            out.append(f"<p style='margin:8px 0 2px'><b>{html.escape(label)}</b> ({len(items)})</p><ul style='margin:0'>")
             out += [f"<li>{html.escape(trunc(v, 400))}</li>" for v in items]
             out.append("</ul>")
     if reworded:
