@@ -1,5 +1,6 @@
 {
   "platform": "android",
+  "schema": 2,
   "package": "com.whatsapp",
   "version": "2.26.23.71",
   "versionCode": "262307112",
