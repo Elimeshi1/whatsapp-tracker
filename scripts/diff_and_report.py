@@ -100,7 +100,11 @@ def classify_changes(added, removed):
                     best, best_ratio = i, ratio
         if best is not None:
             used.add(best)
-            reworded.append([removed[best], a])
+            old = removed[best]
+            # Drop cosmetic-only pairs (differ only in punctuation / case / quotes /
+            # placeholders) — they look identical and aren't a real change.
+            if _norm(old) != _norm(a):
+                reworded.append([old, a])
         else:
             new.append(a)
     removed_only = [r for i, r in enumerate(removed) if i not in used]

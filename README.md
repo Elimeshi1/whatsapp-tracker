@@ -82,10 +82,13 @@ repo but sends nothing.
    - `TELEGRAM_CHAT_ID` = your chat id
 
 You'll get one message per changed platform. Messages use Telegram's
-**Rich Messages** (`sendRichMessage`, Bot API 10.1) — an HTML document with a
-heading, a divider, and **collapsible `<details>` sections**: 🆕 New (open by
-default), ✏️ Reworded and ➖ Removed (collapsed). The whole diff is inline and
-readable (no file). If
+**Rich Messages** (`sendRichMessage`, Bot API 10.1) — an HTML document where the
+**🧩 new screens/features are shown inline** (always visible), and the new texts
+are **grouped by topic** (Passkey & login, Backup, Payments, Calls, …) inside
+**collapsed `<details>` sections** along with ✏️ Reworded and ➖ Removed. Nothing
+is expanded by default; tap a topic to open it. Cosmetic-only changes
+(punctuation/case) are dropped, not shown as reworded. The whole diff is inline
+(no file), split across multiple messages only for very large updates. If
 `sendRichMessage` is ever unavailable it falls back to a plain `sendMessage`.
 The bot must be an admin of the target channel to post (for a private DM, use
 your own user id as `TELEGRAM_CHAT_ID`).
