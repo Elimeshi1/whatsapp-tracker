@@ -69,21 +69,45 @@ def plain(s: str) -> str:
     return _WS.sub(" ", _TAGS.sub("", s or "")).strip()
 
 
-def reword_pair(old: str, new: str):
-    """Return (old, new) trimmed to just the part that actually changed.
+def reword_diff(old: str, new: str):
+    """Split a reword into (context_prefix, old_fragment, new_fragment, suffix).
 
-    Strips tags, then drops the shared leading words (replaced with an ellipsis)
-    so the reader sees the real edit — e.g. "… More about usernames" → "… Learn
-    more" instead of the whole repeated sentence printed twice.
+    Strips tags, then finds the shared leading and trailing words so we can show
+    the whole sentence as context (which identifies *which* string changed) while
+    pointing at the exact fragment that changed. e.g. for
+    "… your number. More about usernames" → "… your number. Learn more" it returns
+    prefix="… your number.", old="More about usernames", new="Learn more", suffix="".
     """
     o, n = plain(old), plain(new)
     i = 0
     while i < len(o) and i < len(n) and o[i] == n[i]:
         i += 1
-    while i > 0 and o[i - 1] != " ":      # back up to a word boundary
+    while i > 0 and o[i - 1] != " ":            # back up to a word boundary
         i -= 1
-    pre = "… " if i > 0 else ""
-    return pre + o[i:], pre + n[i:]
+    j = 0
+    while j < len(o) - i and j < len(n) - i and o[-1 - j] == n[-1 - j]:
+        j += 1
+    while j > 0 and o[len(o) - j] != " ":       # forward to a word boundary
+        j -= 1
+    prefix = o[:i].strip()
+    suffix = (o[len(o) - j:].strip() if j > 0 else "")
+    o_mid = (o[i:len(o) - j] if j > 0 else o[i:]).strip()
+    n_mid = (n[i:len(n) - j] if j > 0 else n[i:]).strip()
+    return prefix, o_mid, n_mid, suffix
+
+
+def reword_html(old: str, new: str, limit: int = 220) -> str:
+    """Render a reword as: context with the new fragment bold + what it replaced.
+
+    Shows enough of the sentence to tell entries apart, the new wording in bold,
+    and "(was: …)" so the change is unambiguous. Falls back to a plain
+    old → new when there's no shared context to anchor on.
+    """
+    prefix, o_mid, n_mid, suffix = reword_diff(old, new)
+    if not prefix and not suffix:               # nothing shared — show both fully
+        return f"{esc(trunc(o_mid, 120))} → <b>{esc(trunc(n_mid, 140))}</b>"
+    ctx = " ".join(p for p in (esc(trunc(prefix, limit)), f"<b>{esc(n_mid)}</b>", esc(suffix)) if p.strip())
+    return f"{ctx}  (was: {esc(trunc(o_mid, 80))})"
 
 
 def short_component(name: str) -> str:
@@ -235,10 +259,8 @@ def _run_sections(run: dict):
         secs.append((f"🆕 {label}", [f"<li>{esc(trunc(plain(v), 260))}</li>" for v in items]))
     rew = run.get("reworded", [])
     if rew:
-        def _row(p):
-            o, n = reword_pair(p[0], p[1])
-            return f"<li>{esc(trunc(o, 140))}  →  <b>{esc(trunc(n, 160))}</b></li>"
-        secs.append(("✏️ Reworded — minor text changes", [_row(p) for p in rew]))
+        secs.append(("✏️ Reworded — minor text changes",
+                     [f"<li>{reword_html(p[0], p[1])}</li>" for p in rew]))
     rem = run.get("removed", [])
     if rem:
         secs.append(("➖ Removed texts", [f"<li>{esc(trunc(plain(v), 180))}</li>" for v in rem]))
@@ -314,8 +336,7 @@ def basic_html(run: dict) -> str:
     if rew:
         lines.append("\n<b>✏️ Reworded:</b>")
         for p in rew[:8]:
-            o, n = reword_pair(p[0], p[1])
-            lines.append(f"• {esc(trunc(o, 80))} → <b>{esc(trunc(n, 100))}</b>")
+            lines.append(f"• {reword_html(p[0], p[1], limit=140)}")
     return "\n".join(lines)[:TG_LIMIT]
 
 
