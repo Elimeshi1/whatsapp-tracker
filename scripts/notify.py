@@ -47,8 +47,43 @@ RICH_BLOCK_BUDGET = 460    # under the 500-block hard limit
 
 
 def esc(s: str) -> str:
-    """Escape the only entities the rich HTML parser needs (& < >)."""
+    """Escape the only entities the rich HTML parser needs (& < >).
+
+    Note: only &amp;/&lt;/&gt; survive Telegram's HTML parser. Other named
+    entities (&rarr;, &nbsp; …) show up literally, so use real Unicode chars
+    (→, ·, spaces) in the markup instead of entities.
+    """
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+_TAGS = re.compile(r"<[^>]+>")
+_WS = re.compile(r"\s+")
+
+
+def plain(s: str) -> str:
+    """Strip HTML markup from a WhatsApp string so it reads cleanly in a message.
+
+    WhatsApp values embed tags like <a href="…">…</a> and <highlight>…</highlight>;
+    shown raw they're noise. Drop the tags, keep the text, collapse whitespace.
+    """
+    return _WS.sub(" ", _TAGS.sub("", s or "")).strip()
+
+
+def reword_pair(old: str, new: str):
+    """Return (old, new) trimmed to just the part that actually changed.
+
+    Strips tags, then drops the shared leading words (replaced with an ellipsis)
+    so the reader sees the real edit — e.g. "… More about usernames" → "… Learn
+    more" instead of the whole repeated sentence printed twice.
+    """
+    o, n = plain(old), plain(new)
+    i = 0
+    while i < len(o) and i < len(n) and o[i] == n[i]:
+        i += 1
+    while i > 0 and o[i - 1] != " ":      # back up to a word boundary
+        i -= 1
+    pre = "… " if i > 0 else ""
+    return pre + o[i:], pre + n[i:]
 
 
 def short_component(name: str) -> str:
@@ -155,7 +190,7 @@ def _run_header(run: dict) -> str:
     prev = run.get("prev_version")
     head = f"<h3>{emoji} WhatsApp {run['platform'].capitalize()} beta</h3>"
     if prev and not run.get("initial"):
-        head += f"<p>{esc(str(prev))} &rarr; <b>{ver}</b>{extra}</p>"
+        head += f"<p>{esc(str(prev))} → <b>{ver}</b>{extra}</p>"
     else:
         head += f"<p><b>{ver}</b>{extra}</p>"
     return head
@@ -172,7 +207,7 @@ def _summary_line(run: dict) -> str:
         parts.append(f"✏️ {rw} reworded")
     if rm:
         parts.append(f"➖ {rm} removed")
-    return "<p>" + " &nbsp; ".join(parts) + "</p>"
+    return "<p>" + "  ·  ".join(parts) + "</p>"
 
 
 def _visible_screens(run: dict) -> str:
@@ -197,14 +232,16 @@ def _run_sections(run: dict):
     word-clusters, then reworded and removed."""
     secs = []
     for label, items in new_text_sections(run):
-        secs.append((f"🆕 {label}", [f"<li>{esc(trunc(v, 260))}</li>" for v in items]))
+        secs.append((f"🆕 {label}", [f"<li>{esc(trunc(plain(v), 260))}</li>" for v in items]))
     rew = run.get("reworded", [])
     if rew:
-        secs.append(("✏️ Reworded — minor text changes",
-                     [f"<li>{esc(trunc(p[0], 100))} &rarr; {esc(trunc(p[1], 140))}</li>" for p in rew]))
+        def _row(p):
+            o, n = reword_pair(p[0], p[1])
+            return f"<li>{esc(trunc(o, 140))}  →  <b>{esc(trunc(n, 160))}</b></li>"
+        secs.append(("✏️ Reworded — minor text changes", [_row(p) for p in rew]))
     rem = run.get("removed", [])
     if rem:
-        secs.append(("➖ Removed texts", [f"<li>{esc(trunc(v, 180))}</li>" for v in rem]))
+        secs.append(("➖ Removed texts", [f"<li>{esc(trunc(plain(v), 180))}</li>" for v in rem]))
     rmc = run.get("removed_components", [])
     if rmc:
         secs.append(("➖ Removed screens / features",
@@ -272,7 +309,13 @@ def basic_html(run: dict) -> str:
             lines.append(f"• <b>{esc(pkg)}</b> — {esc(names)}")
     for label, items in new_text_sections(run)[:6]:
         lines.append(f"\n<b>🆕 {esc(label)}:</b>")
-        lines += [f"• {esc(trunc(v))}" for v in items[:8]]
+        lines += [f"• {esc(trunc(plain(v)))}" for v in items[:8]]
+    rew = run.get("reworded", [])
+    if rew:
+        lines.append("\n<b>✏️ Reworded:</b>")
+        for p in rew[:8]:
+            o, n = reword_pair(p[0], p[1])
+            lines.append(f"• {esc(trunc(o, 80))} → <b>{esc(trunc(n, 100))}</b>")
     return "\n".join(lines)[:TG_LIMIT]
 
 
