@@ -63,8 +63,13 @@ jobs:
       - name: Extract readable class/method names (code surface)
         # Reads the dex method table straight out of the APK — no apktool/baksmali
         # needed. A new readable com.whatsapp class/method is a strong new-feature
-        # signal that usually lands before any UI text.
-        run: python3 scripts/extract_methods.py artifacts/WhatsApp.apk artifacts/android-methods.json
+        # signal that usually lands before any UI text. Version is read from the
+        # apktool.yml the decode step produced.
+        run: |
+          VER=$(sed -nE "s/^[[:space:]]*versionName:[[:space:]]*['\"]?([^'\"]+).*/\1/p" decoded/apktool.yml | head -1)
+          VC=$(sed -nE "s/^[[:space:]]*versionCode:[[:space:]]*['\"]?([^'\"]+).*/\1/p" decoded/apktool.yml | head -1)
+          echo "code surface for v$VER ($VC)"
+          python3 scripts/extract_methods.py artifacts/WhatsApp.apk artifacts/android-methods.json "$VER" "$VC"
 
       - uses: actions/upload-artifact@v4
         with:
