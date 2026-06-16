@@ -165,6 +165,46 @@ def fmt_val(v: str, limit: int = 400) -> str:
     return v if len(v) <= limit else v[:limit] + " …"
 
 
+def short_code(name: str) -> str:
+    """Drop the com.whatsapp. prefix from a class/method name for readability."""
+    return name[len("com.whatsapp."):] if name.startswith("com.whatsapp.") else name
+
+
+def diff_code(methods_new: dict, methods_old: dict):
+    """Diff the readable code surface (classes & methods) between two builds.
+
+    This is the "function names" signal: WhatsApp obfuscates most code, but the
+    readable com/whatsapp classes (extracted straight from the dex) are stable
+    enough to diff, and a new readable class usually lands *before* any UI text
+    does. Returns the cuts we report, or None when there's no methods extract
+    for this platform (e.g. macOS):
+
+      new_classes   — new top-level (non-synthetic) classes: the headline
+                      signal (a new screen / manager / service / worker).
+      removed_classes — top-level classes that disappeared.
+      new_methods   — new readable methods on classes that *already existed*
+                      (a capability added to an existing screen). Methods of
+                      brand-new classes are omitted — the new class already
+                      conveys them.
+
+    Synthetic lambda/coroutine names (containing '$') are dropped as noise.
+    """
+    if not methods_new:
+        return None
+    new_c = set(methods_new.get("classes") or [])
+    old_c = set((methods_old or {}).get("classes") or [])
+    new_m = set(methods_new.get("methods") or [])
+    old_m = set((methods_old or {}).get("methods") or [])
+    added_c = new_c - old_c
+    return {
+        "new_classes": sorted(c for c in added_c if "$" not in c),
+        "removed_classes": sorted(c for c in (old_c - new_c) if "$" not in c),
+        "new_methods": sorted(
+            m for m in (new_m - old_m)
+            if "$" not in m and m.rsplit("#", 1)[0] not in added_c),
+    }
+
+
 def render_report(platform, new_data, prev_version, initial: bool, d: dict) -> str:
     ve = version_extra(platform, new_data)
     extra = f" ({ve})" if ve else ""
@@ -213,6 +253,12 @@ def render_report(platform, new_data, prev_version, initial: bool, d: dict) -> s
             lambda p: f"{fmt_val(p[0])}  →  {fmt_val(p[1])}")
     section("➖ Removed texts", d["removed"], fmt_val)
     section("➖ Removed screens / features", d["removed_components"], code)
+
+    # Code-surface signal: readable class/method names from the dex.
+    cn = lambda x: f"`{short_code(x)}`"
+    section("🧬 New classes / features — code surface", d.get("new_classes", []), cn)
+    section("🧬 New methods on existing screens — code surface", d.get("new_methods", []), cn)
+    section("➖ Removed classes — code surface", d.get("removed_classes", []), cn)
     return "\n".join(lines)
 
 
@@ -246,9 +292,24 @@ def process_platform(platform: str, extract_path: Path, area_index: dict = None)
     # Pull areas out for labeling, but don't persist them in the committed
     # baseline/snapshot (5k+ entries; only needed transiently for this diff).
     string_areas = new_data.pop("string_areas", None) or {}
+
+    # Code-surface signal (Android only): readable class/method names pulled
+    # straight from the dex by extract_methods.py. Diffed against its own
+    # baseline, kept separate from latest.json so that file stays small.
+    methods_new = load_json(INCOMING / f"{platform}-methods" / f"{platform}-methods.json")
+    methods_baseline = DATA / platform / "methods.json"
+    code_initial = methods_new is not None and not methods_baseline.exists()
+    code_diff = diff_code(methods_new, load_json(methods_baseline))
+    if methods_new is not None:
+        methods_baseline.parent.mkdir(parents=True, exist_ok=True)
+        methods_baseline.write_text(
+            json.dumps(methods_new, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    empty_code = {"new_classes": [], "new_methods": [], "removed_classes": []}
     if initial:
         d = {"new": [], "new_groups": [], "reworded": [], "removed": [],
-             "new_components": [], "removed_components": [], "new_permissions": [], "removed_permissions": []}
+             "new_components": [], "removed_components": [], "new_permissions": [],
+             "removed_permissions": [], **empty_code}
         has_changes = True
     else:
         new_items, reworded, removed_only = classify_changes(
@@ -262,7 +323,12 @@ def process_platform(platform: str, extract_path: Path, area_index: dict = None)
             "removed_components": sorted(old_comp - new_comp),
             "new_permissions": sorted(new_perm - old_perm),
             "removed_permissions": sorted(old_perm - new_perm),
+            **empty_code,
         }
+        # Skip code on the feature's first run (no methods baseline yet) — the
+        # whole surface would otherwise look "new".
+        if code_diff and not code_initial:
+            d.update(code_diff)
         has_changes = any(d.values())
 
     if not has_changes:
@@ -297,6 +363,8 @@ def process_platform(platform: str, extract_path: Path, area_index: dict = None)
         parts = []
         if d["new_components"]:
             parts.append(f"{len(d['new_components'])} new screens")
+        if d["new_classes"]:
+            parts.append(f"{len(d['new_classes'])} new classes")
         parts.append(f"{len(d['new'])} new texts")
         if d["reworded"]:
             parts.append(f"{len(d['reworded'])} reworded")

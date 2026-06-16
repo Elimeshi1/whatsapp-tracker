@@ -9,3 +9,7 @@ notify.json
 notify_email_preview.html
 __pycache__/
 *.pyc
+
+# local demo/scratch (large APK bundles)
+demo/
+*.xapk

@@ -17,7 +17,7 @@ changes — laid out inline and readable.
 
 | Platform | Source | Extracted |
 |----------|--------|-----------|
-| Android  | WhatsApp's self-hosted APK (or a manual APK URL you pass in) | the set of human-readable `strings.xml` values, **each tied to the WhatsApp feature module that uses it** (see below), plus manifest components/permissions |
+| Android  | WhatsApp's self-hosted APK (or a manual APK URL you pass in) | the set of human-readable `strings.xml` values, **each tied to the WhatsApp feature module that uses it** (see below), plus manifest components/permissions, plus the readable **class & method names** (the code surface — see below) |
 | macOS    | Official beta endpoint `?configuration=Beta` → `.dmg` | English UI values from WhatsApp's custom `*.localite.values` blobs (the main bundle keeps no standard English `Localizable.strings`), plus `*.strings`/`*.loctable` for InfoPlist/permission text |
 
 ### Where each Android string belongs
@@ -45,6 +45,23 @@ diffing by name is meaningless — every string looks "changed". Instead we diff
 the **set of string values**: a value present in the new build but not the old
 one is new UI text — a hint at a new feature. This is the same signal trackers
 like WABetaInfo watch.
+
+### Code surface — new classes & methods (the "function names" signal)
+
+Beyond UI text, Android tracks WhatsApp's own **readable class and method names**.
+WhatsApp obfuscates most code (`X/…`, methods `a`/`b`/`c`), but ~4k classes keep
+readable `com/whatsapp/<module>/…` paths, and a new readable class usually lands
+*before* any UI text does — so it's the earliest concrete new-feature hint. e.g.
+the `companiondevice.Passkey…` classes reveal passkey sign-in, `MusicBrowseViewModel`
+a music browser, `StreamingDownloadEngine` a new media-download engine.
+
+`extract_methods.py` reads this straight from the APK's **dex method table** — no
+apktool/baksmali needed (those slow Java steps stay only for the string→module
+map). We report two cuts, dropping obfuscated and synthetic (`$lambda`/coroutine)
+noise: **new top-level classes** (the headline), and **new methods on classes that
+already existed** (a capability added to an existing screen). The code baseline is
+kept in `data/<platform>/methods.json`, separate from `latest.json` so that stays
+small.
 
 ## How it works
 

@@ -60,10 +60,22 @@ jobs:
       - name: Extract strings & flags
         run: python3 scripts/extract_android.py decoded artifacts/android-extract.json smali
 
+      - name: Extract readable class/method names (code surface)
+        # Reads the dex method table straight out of the APK — no apktool/baksmali
+        # needed. A new readable com.whatsapp class/method is a strong new-feature
+        # signal that usually lands before any UI text.
+        run: python3 scripts/extract_methods.py artifacts/WhatsApp.apk artifacts/android-methods.json
+
       - uses: actions/upload-artifact@v4
         with:
           name: android-extract
           path: artifacts/android-extract.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-methods
+          path: artifacts/android-methods.json
           if-no-files-found: error
 
   macos:

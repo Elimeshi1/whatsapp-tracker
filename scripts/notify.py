@@ -223,15 +223,30 @@ def _run_header(run: dict) -> str:
 def _summary_line(run: dict) -> str:
     nc, nt = len(run.get("new_components", [])), len(run.get("new", []))
     rw, rm = len(run.get("reworded", [])), len(run.get("removed", []))
+    ncl = len(run.get("new_classes", []))
     parts = []
     if nc:
         parts.append(f"🧩 <b>{nc} new screens</b>")
+    if ncl:
+        parts.append(f"🧬 <b>{ncl} new classes</b>")
     parts.append(f"🆕 <b>{nt} new texts</b>")
     if rw:
         parts.append(f"✏️ {rw} reworded")
     if rm:
         parts.append(f"➖ {rm} removed")
     return "<p>" + "  ·  ".join(parts) + "</p>"
+
+
+def _visible_code(run: dict) -> str:
+    """New code-surface classes shown inline (not collapsed), grouped by package."""
+    ncl = run.get("new_classes", [])
+    if not ncl:
+        return ""
+    out = f"<p><b>🧬 New classes / features ({len(ncl)})</b></p><ul>"
+    for pkg, items in group_components(ncl):
+        names = ", ".join(c.split(".")[-1] for c in items)
+        out += f"<li><b>{esc(pkg)}</b> — {esc(names)}</li>"
+    return out + "</ul>"
 
 
 def _visible_screens(run: dict) -> str:
@@ -264,10 +279,18 @@ def _run_sections(run: dict):
     rem = run.get("removed", [])
     if rem:
         secs.append(("➖ Removed texts", [f"<li>{esc(trunc(plain(v), 180))}</li>" for v in rem]))
+    nm = run.get("new_methods", [])
+    if nm:
+        secs.append(("🧬 New methods on existing screens",
+                     [f"<li><code>{esc(short_component(m))}</code></li>" for m in nm]))
     rmc = run.get("removed_components", [])
     if rmc:
         secs.append(("➖ Removed screens / features",
                      [f"<li><code>{esc(short_component(c))}</code></li>" for c in rmc]))
+    rcl = run.get("removed_classes", [])
+    if rcl:
+        secs.append(("➖ Removed classes",
+                     [f"<li><code>{esc(short_component(c))}</code></li>" for c in rcl]))
     return secs
 
 
@@ -282,7 +305,8 @@ def rich_messages(run: dict, generated: str):
         texts = run.get("counts", {}).get("texts", 0)
         return [_run_header(run) + f"<p><i>Initial baseline captured</i> ({texts} texts).</p>"]
 
-    header = _run_header(run) + "<hr/>" + _summary_line(run) + _visible_screens(run)
+    header = (_run_header(run) + "<hr/>" + _summary_line(run)
+              + _visible_screens(run) + _visible_code(run))
     footer = f"<footer>WhatsApp beta tracker · {esc(generated)}</footer>" if generated else ""
     messages, cur, blocks = [], header, 4
 
@@ -328,6 +352,12 @@ def basic_html(run: dict) -> str:
         lines.append("\n<b>🧩 New screens:</b>")
         for pkg, items in group_components(nc):
             names = ", ".join(short_component(c).split(".")[-1] for c in items)
+            lines.append(f"• <b>{esc(pkg)}</b> — {esc(names)}")
+    ncl = run.get("new_classes", [])
+    if ncl:
+        lines.append("\n<b>🧬 New classes:</b>")
+        for pkg, items in group_components(ncl):
+            names = ", ".join(c.split(".")[-1] for c in items)
             lines.append(f"• <b>{esc(pkg)}</b> — {esc(names)}")
     for label, items in new_text_sections(run)[:6]:
         lines.append(f"\n<b>🆕 {esc(label)}:</b>")
