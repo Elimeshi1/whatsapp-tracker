@@ -237,59 +237,66 @@ def _summary_line(run: dict) -> str:
     return "<p>" + "  ·  ".join(parts) + "</p>"
 
 
-def _visible_code(run: dict) -> str:
-    """New code-surface classes shown inline (not collapsed), grouped by package."""
-    ncl = run.get("new_classes", [])
-    if not ncl:
-        return ""
-    out = f"<p><b>🧬 New classes / features ({len(ncl)})</b></p><ul>"
-    for pkg, items in group_components(ncl):
-        names = ", ".join(c.split(".")[-1] for c in items)
-        out += f"<li><b>{esc(pkg)}</b> — {esc(names)}</li>"
-    return out + "</ul>"
+# Clear visual break between the UI-text changes and the code-surface changes.
+CODE_DIVIDER = "<hr/><h3>🧬 Code changes — classes &amp; methods</h3>"
 
 
-def _visible_screens(run: dict) -> str:
-    """New screens/permissions shown inline (not collapsed), grouped by package."""
-    out = ""
-    nc = run.get("new_components", [])
-    if nc:
-        out += f"<p><b>🧩 New screens / features ({len(nc)})</b></p><ul>"
-        for pkg, items in group_components(nc):
-            names = ", ".join(short_component(c).split(".")[-1] for c in items)
-            out += f"<li><b>{esc(pkg)}</b> — {esc(names)}</li>"
-        out += "</ul>"
-    np = run.get("new_permissions", [])
-    if np:
-        lis = "".join(f"<li><code>{esc(short_component(p))}</code></li>" for p in np)
-        out += f"<p><b>🔐 New permissions ({len(np)})</b></p><ul>{lis}</ul>"
-    return out
+def _grouped_items(names, strip=lambda c: c):
+    """Render names grouped by first package segment into <li> rows, one per
+    package: "<b>module</b> — Foo, Bar". Keeps long class/screen lists scannable."""
+    items = []
+    for pkg, members in group_components(names):
+        leaves = ", ".join(strip(c).split(".")[-1] for c in members)
+        items.append(f"<li><b>{esc(pkg)}</b> — {esc(leaves)}</li>")
+    return items
 
 
-def _run_sections(run: dict):
-    """Collapsed (label, [<li> html, ...]) sections: new texts in automatic
-    word-clusters, then reworded and removed."""
+def _string_sections(run: dict):
+    """(label, [<li> …]) sections for the UI-text changes (shown first).
+
+    Labels carry their own count; new texts are split into the automatic
+    word/module clusters."""
     secs = []
     for label, items in new_text_sections(run):
-        secs.append((f"🆕 {label}", [f"<li>{esc(trunc(plain(v), 260))}</li>" for v in items]))
+        secs.append((f"🆕 {label} ({len(items)})",
+                     [f"<li>{esc(trunc(plain(v), 260))}</li>" for v in items]))
     rew = run.get("reworded", [])
     if rew:
-        secs.append(("✏️ Reworded — minor text changes",
+        secs.append((f"✏️ Reworded — minor text changes ({len(rew)})",
                      [f"<li>{reword_html(p[0], p[1])}</li>" for p in rew]))
     rem = run.get("removed", [])
     if rem:
-        secs.append(("➖ Removed texts", [f"<li>{esc(trunc(plain(v), 180))}</li>" for v in rem]))
+        secs.append((f"➖ Removed texts ({len(rem)})",
+                     [f"<li>{esc(trunc(plain(v), 180))}</li>" for v in rem]))
+    return secs
+
+
+def _code_sections(run: dict):
+    """(label, [<li> …]) sections for the code-surface changes (shown below the
+    divider): new screens, classes, methods, permissions, then removals."""
+    secs = []
+    nc = run.get("new_components", [])
+    if nc:
+        secs.append((f"🧩 New screens / features ({len(nc)})",
+                     _grouped_items(nc, short_component)))
+    ncl = run.get("new_classes", [])
+    if ncl:
+        secs.append((f"🧬 New classes / features ({len(ncl)})", _grouped_items(ncl)))
     nm = run.get("new_methods", [])
     if nm:
-        secs.append(("🧬 New methods on existing screens",
+        secs.append((f"🧬 New methods on existing screens ({len(nm)})",
                      [f"<li><code>{esc(short_component(m))}</code></li>" for m in nm]))
+    np = run.get("new_permissions", [])
+    if np:
+        secs.append((f"🔐 New permissions ({len(np)})",
+                     [f"<li><code>{esc(short_component(p))}</code></li>" for p in np]))
     rmc = run.get("removed_components", [])
     if rmc:
-        secs.append(("➖ Removed screens / features",
+        secs.append((f"➖ Removed screens / features ({len(rmc)})",
                      [f"<li><code>{esc(short_component(c))}</code></li>" for c in rmc]))
     rcl = run.get("removed_classes", [])
     if rcl:
-        secs.append(("➖ Removed classes",
+        secs.append((f"➖ Removed classes ({len(rcl)})",
                      [f"<li><code>{esc(short_component(c))}</code></li>" for c in rcl]))
     return secs
 
@@ -297,20 +304,38 @@ def _run_sections(run: dict):
 def rich_messages(run: dict, generated: str):
     """Paginate one run into one or more rich HTML docs within Telegram limits.
 
-    New screens are shown inline (always visible); the topic-grouped text lists
-    are collapsed. No section is open by default and there are no per-section
-    caps — sections are split across messages only if one would exceed limits.
+    Layout: a visible header + at-a-glance summary line, then every section as a
+    collapsed <details> (closed by default, tap to open) — UI-text changes first,
+    then a clear divider, then the code-surface changes. Sections are split across
+    messages only if one would exceed Telegram's limits.
     """
     if run.get("initial"):
         texts = run.get("counts", {}).get("texts", 0)
         return [_run_header(run) + f"<p><i>Initial baseline captured</i> ({texts} texts).</p>"]
 
-    header = (_run_header(run) + "<hr/>" + _summary_line(run)
-              + _visible_screens(run) + _visible_code(run))
+    header = _run_header(run) + "<hr/>" + _summary_line(run)
     footer = f"<footer>WhatsApp beta tracker · {esc(generated)}</footer>" if generated else ""
-    messages, cur, blocks = [], header, 4
 
-    for label, items in _run_sections(run):
+    # Ordered renderables: text sections, a divider, then code sections.
+    # ("details", label, items) renders a collapsed section; ("raw", html) is
+    # emitted verbatim (the divider/heading).
+    renderables = [("details", lbl, items) for lbl, items in _string_sections(run)]
+    code = _code_sections(run)
+    if code:
+        renderables.append(("raw", CODE_DIVIDER))
+        renderables += [("details", lbl, items) for lbl, items in code]
+
+    messages, cur, blocks = [], header, 4
+    for kind, *rest in renderables:
+        if kind == "raw":
+            html = rest[0]
+            if len(cur) + len(html) + len(footer) + 80 > RICH_CHAR_BUDGET:
+                messages.append(cur + footer)
+                cur, blocks = "", 0
+            cur += html
+            blocks += 1
+            continue
+        label, items = rest
         idx, first = 0, True
         while idx < len(items):
             base = len(cur) + len(footer) + 80
@@ -326,7 +351,7 @@ def rich_messages(run: dict, generated: str):
                 messages.append(cur + footer)
                 cur, blocks = "", 0
                 continue
-            summary_label = f"{label} ({len(items)})" if first else f"{label} (cont.)"
+            summary_label = label if first else f"{label} (cont.)"
             cur += _detail(summary_label, "".join(chunk))
             blocks += len(chunk) + 2
             first = False
@@ -335,8 +360,25 @@ def rich_messages(run: dict, generated: str):
     return messages or [header + footer]
 
 
+def _blockquote_section(label: str, items: list) -> str:
+    """A section as an expandable (collapsed-by-default) blockquote for the
+    plain sendMessage fallback: bold heading + <blockquote expandable> body.
+    Converts the rich <li> rows into bullet lines (sendMessage HTML has no <ul>)."""
+    body = "".join(items).replace("<li>", "• ").replace("</li>", "\n").rstrip("\n")
+    return f"<b>{esc_label(label)}</b>\n<blockquote expandable>{body}</blockquote>"
+
+
+def esc_label(label: str) -> str:
+    # Labels are our own text (with emoji); only the HTML-significant chars matter.
+    return label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def basic_html(run: dict) -> str:
-    """sendMessage-compatible HTML (fallback if sendRichMessage is unavailable)."""
+    """sendMessage-compatible HTML (fallback if sendRichMessage is unavailable).
+
+    Same layout as the rich version — summary, UI-text sections, a divider, then
+    code sections — but each section is an expandable blockquote (collapsed by
+    default), which plain sendMessage supports."""
     emoji = PLATFORM_EMOJI.get(run["platform"], "📱")
     prev = f"{esc(str(run['prev_version']))} → " if run.get("prev_version") else ""
     lines = [f"{emoji} <b>WhatsApp {run['platform'].capitalize()} beta</b> "
@@ -345,28 +387,27 @@ def basic_html(run: dict) -> str:
         texts = run.get("counts", {}).get("texts", 0)
         lines.append(f"<i>Initial baseline captured</i> ({texts} texts).")
         return "\n".join(lines)
-    nc = run.get("new_components", [])
-    lines.append(f"\n🧩 <b>{len(nc)} new screens</b> · 🆕 <b>{len(run.get('new', []))} new texts</b> · "
-                 f"✏️ {len(run.get('reworded', []))} reworded · ➖ {len(run.get('removed', []))} removed")
+
+    nc, ncl = len(run.get("new_components", [])), len(run.get("new_classes", []))
+    summ = []
     if nc:
-        lines.append("\n<b>🧩 New screens:</b>")
-        for pkg, items in group_components(nc):
-            names = ", ".join(short_component(c).split(".")[-1] for c in items)
-            lines.append(f"• <b>{esc(pkg)}</b> — {esc(names)}")
-    ncl = run.get("new_classes", [])
+        summ.append(f"🧩 <b>{nc} new screens</b>")
     if ncl:
-        lines.append("\n<b>🧬 New classes:</b>")
-        for pkg, items in group_components(ncl):
-            names = ", ".join(c.split(".")[-1] for c in items)
-            lines.append(f"• <b>{esc(pkg)}</b> — {esc(names)}")
-    for label, items in new_text_sections(run)[:6]:
-        lines.append(f"\n<b>🆕 {esc(label)}:</b>")
-        lines += [f"• {esc(trunc(plain(v)))}" for v in items[:8]]
-    rew = run.get("reworded", [])
-    if rew:
-        lines.append("\n<b>✏️ Reworded:</b>")
-        for p in rew[:8]:
-            lines.append(f"• {reword_html(p[0], p[1], limit=140)}")
+        summ.append(f"🧬 <b>{ncl} new classes</b>")
+    summ.append(f"🆕 <b>{len(run.get('new', []))} new texts</b>")
+    if run.get("reworded"):
+        summ.append(f"✏️ {len(run['reworded'])} reworded")
+    if run.get("removed"):
+        summ.append(f"➖ {len(run['removed'])} removed")
+    lines.append("\n" + "  ·  ".join(summ))
+
+    for label, items in _string_sections(run):
+        lines.append("\n" + _blockquote_section(label, items))
+    code = _code_sections(run)
+    if code:
+        lines.append("\n➖➖➖➖➖  🧬 <b>Code changes</b>  ➖➖➖➖➖")
+        for label, items in code:
+            lines.append("\n" + _blockquote_section(label, items))
     return "\n".join(lines)[:TG_LIMIT]
 
 
