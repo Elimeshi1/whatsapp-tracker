@@ -38,6 +38,7 @@ jobs:
             https://github.com/baksmali/smali/releases/download/v2.5.2/baksmali-2.5.2.jar
 
       - name: Download WhatsApp beta APK
+        id: download
         env:
           APK_URL: ${{ github.event.inputs.apk_url }}
         run: bash scripts/download_android.sh artifacts
@@ -83,12 +84,23 @@ jobs:
           path: artifacts/android-methods.json
           if-no-files-found: error
 
+      # Fires only when the APK download itself failed (not a later step) — the
+      # most common breakage, since WhatsApp can change/relocate the APK URL.
+      - name: Alert on download failure
+        if: failure() && steps.download.outcome == 'failure'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 scripts/notify.py --alert "⚠️ <b>WhatsApp Android beta tracker</b> — APK download failed. <a href=\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\">View run</a>"
+
   macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Download WhatsApp Mac beta
+        id: download
         run: bash scripts/download_mac.sh artifacts
 
       - name: Extract strings
@@ -99,6 +111,14 @@ jobs:
           name: mac-extract
           path: artifacts/mac-extract.json
           if-no-files-found: error
+
+      - name: Alert on download failure
+        if: failure() && steps.download.outcome == 'failure'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 scripts/notify.py --alert "⚠️ <b>WhatsApp Mac beta tracker</b> — DMG download failed. <a href=\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\">View run</a>"
 
   report:
     needs: [android, macos]

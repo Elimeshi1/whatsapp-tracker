@@ -12,7 +12,9 @@ Enabled purely by presence of secrets (set as env vars):
 If it isn't configured it prints a notice and exits 0 (never fails the run).
 Set NOTIFY_DRY_RUN=1 to render to stdout instead of sending.
 
-Stdlib only. Usage: notify.py [notify.json]
+Stdlib only. Usage:
+  notify.py [notify.json]        send the change notification(s)
+  notify.py --alert <html>       send a one-off alert (CI failure handler)
 """
 import json
 import os
@@ -477,6 +479,27 @@ def send_telegram(payload: dict):
     print("Telegram: sent" if not DRY else "Telegram: dry-run rendered")
 
 
+def send_alert(text: str):
+    """Send a one-off plain HTML alert (used by CI when a step fails).
+
+    Best-effort and never raises: if Telegram isn't configured it just prints a
+    notice, so it can't itself fail the failure-handling step that calls it.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if DRY:
+        print(f"[alert dry-run] {text}")
+        return
+    if not (token and chat_id):
+        print("notify: Telegram not configured; alert skipped")
+        return
+    try:
+        tg_send_message(token, chat_id, text, parse_mode="HTML")
+        print("Telegram: alert sent")
+    except Exception as exc:  # noqa: BLE001 — never let the alert fail the job
+        print(f"notify: alert send failed: {exc}", file=sys.stderr)
+
+
 # -------------------------------------------------------------------- main ---
 
 def main() -> int:
@@ -484,6 +507,13 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):
         pass
+
+    # Alert mode: `notify.py --alert <html message>` sends one plain message.
+    # Used by the workflow's failure handler; unrelated to notify.json.
+    if len(sys.argv) > 1 and sys.argv[1] == "--alert":
+        send_alert(" ".join(sys.argv[2:]) or "⚠️ WhatsApp tracker: a run failed.")
+        return 0
+
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "notify.json"
     if not path.exists():
         print("notify: no notify.json, nothing to do")
