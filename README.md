@@ -33,10 +33,10 @@ Under **Settings → Secrets and variables → Actions → New repository secret
 | `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather) (`/newbot`) |
 | `TELEGRAM_CHAT_ID` | Your chat id (a number; group/channel ids start with `-`) |
 
-To get your chat id: message your new bot once, then open
-`https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` and read
-`result[].message.chat.id`. For a channel, add the bot as an admin and use the
-channel id.
+To get your chat id, message [@GetChatID_IL_BOT](https://t.me/GetChatID_IL_BOT)
+— it replies with your id immediately. For a channel, add that bot to the channel
+to read the channel id (it starts with `-100`), then add **your** bot as an admin
+so it can post.
 
 If the secrets aren't set, the tracker still records changes in the repo — it
 just sends nothing.
