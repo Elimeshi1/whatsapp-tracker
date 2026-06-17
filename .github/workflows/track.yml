@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Optional direct APK URL for Android (e.g. an APKMirror beta link). Leave empty to use APKPure."
+        description: "Optional direct APK URL for Android (e.g. an APKMirror beta link). Leave empty to use Official whatsapp apk."
         required: false
         default: ""
 
