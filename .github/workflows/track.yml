@@ -31,7 +31,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Cache apktool & baksmali
+        id: cache-tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            apktool.jar
+            baksmali.jar
+          key: tool-jars-apktool2.11.1-baksmali2.5.2
+
       - name: Download apktool & baksmali
+        if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
           curl -fSL -o apktool.jar \
             https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar
