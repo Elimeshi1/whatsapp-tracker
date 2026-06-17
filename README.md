@@ -94,6 +94,27 @@ schedule (every 3h)
                   └─ notify Telegram if anything changed
 ```
 
+The committed `data/<platform>/latest.json` is the baseline the next run diffs
+against, so git history doubles as a full version-by-version archive.
+
+### Project layout
+
+Each stage is one script; they communicate only through JSON files, so any stage
+can be run and tested on its own.
+
+| File | Stage | Responsibility |
+|------|-------|----------------|
+| `.github/workflows/track.yml` | orchestration | the schedule + the three jobs (android, macos, report) |
+| `scripts/download_android.sh` | fetch | download the APK (or a manual `apk_url`) |
+| `scripts/download_mac.sh` | fetch | download the macOS beta `.dmg` |
+| `scripts/extract_android.py` | extract | APK → strings (tagged by module), components, permissions |
+| `scripts/extract_methods.py` | extract | APK dex → readable class & method names (the code surface) |
+| `scripts/extract_mac.py` | extract | `.dmg` → English UI strings |
+| `scripts/diff_and_report.py` | diff | compare each extract vs its baseline → report + `notify.json` |
+| `scripts/notify.py` | notify | render `notify.json` into the Telegram message and send it |
+| `data/<platform>/` | state | committed baselines + per-version snapshots |
+| `reports/`, `CHANGELOG.md` | output | human-readable history |
+
 ## Running locally (optional)
 
 ```bash
