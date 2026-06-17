@@ -301,13 +301,47 @@ def _code_sections(run: dict):
     return secs
 
 
+def _renderables(run: dict):
+    """The ordered blocks of one message, before pagination.
+
+    Each is ("details", label, items) — a collapsed section — or ("raw", html),
+    emitted verbatim. Layout: UI-text sections first, then a divider, then the
+    code-surface sections.
+    """
+    blocks = [("details", lbl, items) for lbl, items in _string_sections(run)]
+    code = _code_sections(run)
+    if code:
+        blocks.append(("raw", CODE_DIVIDER))
+        blocks += [("details", lbl, items) for lbl, items in code]
+    return blocks
+
+
+def _fit_chunk(items, start, base_len, label, blocks):
+    """Greedily take items[start:] that still fit one message.
+
+    Returns (chunk, next_index). Stops at whichever Telegram limit is hit first:
+    the per-message character budget or the block-count budget. An empty chunk
+    means not even one more item fits — the caller should flush and retry.
+    """
+    chunk, clen, idx = [], len(label) + 40, start
+    while idx < len(items):
+        item = items[idx]
+        if (base_len + clen + len(item) > RICH_CHAR_BUDGET
+                or blocks + len(chunk) + 2 > RICH_BLOCK_BUDGET):
+            break
+        chunk.append(item)
+        clen += len(item)
+        idx += 1
+    return chunk, idx
+
+
 def rich_messages(run: dict, generated: str):
     """Paginate one run into one or more rich HTML docs within Telegram limits.
 
-    Layout: a visible header + at-a-glance summary line, then every section as a
-    collapsed <details> (closed by default, tap to open) — UI-text changes first,
-    then a clear divider, then the code-surface changes. Sections are split across
-    messages only if one would exceed Telegram's limits.
+    A visible header + at-a-glance summary line, then every section as a collapsed
+    <details> (closed by default, tap to open). Sections are split across messages
+    only if one would exceed Telegram's char/block limits; a continued section is
+    re-labelled "(cont.)".
     """
     if run.get("initial"):
         texts = run.get("counts", {}).get("texts", 0)
@@ -316,22 +350,19 @@ def rich_messages(run: dict, generated: str):
     header = _run_header(run) + "<hr/>" + _summary_line(run)
     footer = f"<footer>WhatsApp beta tracker · {esc(generated)}</footer>" if generated else ""
 
-    # Ordered renderables: text sections, a divider, then code sections.
-    # ("details", label, items) renders a collapsed section; ("raw", html) is
-    # emitted verbatim (the divider/heading).
-    renderables = [("details", lbl, items) for lbl, items in _string_sections(run)]
-    code = _code_sections(run)
-    if code:
-        renderables.append(("raw", CODE_DIVIDER))
-        renderables += [("details", lbl, items) for lbl, items in code]
+    messages = []
+    cur, blocks = header, 4
 
-    messages, cur, blocks = [], header, 4
-    for kind, *rest in renderables:
+    def flush():
+        nonlocal cur, blocks
+        messages.append(cur + footer)
+        cur, blocks = "", 0
+
+    for kind, *rest in _renderables(run):
         if kind == "raw":
             html = rest[0]
             if len(cur) + len(html) + len(footer) + 80 > RICH_CHAR_BUDGET:
-                messages.append(cur + footer)
-                cur, blocks = "", 0
+                flush()
             cur += html
             blocks += 1
             continue
@@ -339,24 +370,15 @@ def rich_messages(run: dict, generated: str):
         idx, first = 0, True
         while idx < len(items):
             base = len(cur) + len(footer) + 80
-            chunk, clen = [], len(label) + 40
-            while idx < len(items):
-                it = items[idx]
-                if base + clen + len(it) > RICH_CHAR_BUDGET or blocks + len(chunk) + 2 > RICH_BLOCK_BUDGET:
-                    break
-                chunk.append(it)
-                clen += len(it)
-                idx += 1
-            if not chunk:                       # current message is full → flush
-                messages.append(cur + footer)
-                cur, blocks = "", 0
+            chunk, idx = _fit_chunk(items, idx, base, label, blocks)
+            if not chunk:                       # message full → flush and retry
+                flush()
                 continue
-            summary_label = label if first else f"{label} (cont.)"
-            cur += _detail(summary_label, "".join(chunk))
+            cur += _detail(label if first else f"{label} (cont.)", "".join(chunk))
             blocks += len(chunk) + 2
             first = False
     if cur:
-        messages.append(cur + footer)
+        flush()
     return messages or [header + footer]
 
 
