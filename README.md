@@ -194,16 +194,8 @@ code or app binaries in this repo, only the small JSON/text diffs it derives fro
 them; and it never touches WhatsApp's servers, accounts, or any user data.
 Everything runs against a local copy of a public build.
 
-**Terms of Service.** WhatsApp's [Terms of Service](https://www.whatsapp.com/legal/terms-of-service)
-state that you may not *"reverse engineer, alter, modify, create derivative works
-from, decompile, or extract code from"* their Services. Inspecting and
-disassembling the app to build a changelog — even read-only, as here — falls
-within the activities those terms restrict. Some jurisdictions grant statutory
-exceptions for interoperability, security research, or private study; whether one
-applies to you depends on your local law. This project is provided for
-**educational and research purposes only** — review WhatsApp's Terms of Service
-and use it at your own risk. Do not redistribute WhatsApp's APK/DMG or any assets
-extracted from them.
+This project is provided for **educational and research purposes only**. Do not
+redistribute WhatsApp's APK/DMG or any assets extracted from them.
 
 ## License
 
