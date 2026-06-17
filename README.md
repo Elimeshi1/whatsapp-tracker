@@ -178,3 +178,35 @@ apktool/baksmali needed. We report two cuts, dropping obfuscated and synthetic
 **new methods on classes that already existed** (a capability added to an
 existing screen). This baseline lives in `data/<platform>/methods.json`, separate
 from `latest.json` so that stays small.
+
+## Disclaimer
+
+This is an independent, unofficial project. It is **not affiliated with,
+endorsed by, or connected to WhatsApp LLC or Meta**. "WhatsApp" is a trademark of
+its respective owner.
+
+**What it does — and doesn't do.** It downloads WhatsApp's *publicly distributed*
+release builds (the same files anyone can download from whatsapp.com) and reads
+them to produce a changelog: it extracts and compares **metadata only** — string
+values, manifest entries, and the readable names of classes and methods. It does
+**not** modify, patch, repackage, or redistribute the app; it stores no WhatsApp
+code or app binaries in this repo, only the small JSON/text diffs it derives from
+them; and it never touches WhatsApp's servers, accounts, or any user data.
+Everything runs against a local copy of a public build.
+
+**Terms of Service.** WhatsApp's [Terms of Service](https://www.whatsapp.com/legal/terms-of-service)
+state that you may not *"reverse engineer, alter, modify, create derivative works
+from, decompile, or extract code from"* their Services. Inspecting and
+disassembling the app to build a changelog — even read-only, as here — falls
+within the activities those terms restrict. Some jurisdictions grant statutory
+exceptions for interoperability, security research, or private study; whether one
+applies to you depends on your local law. This project is provided for
+**educational and research purposes only** — review WhatsApp's Terms of Service
+and use it at your own risk. Do not redistribute WhatsApp's APK/DMG or any assets
+extracted from them.
+
+## License
+
+The source code in this repository is released under the [MIT License](LICENSE).
+This covers only the project's own code — not WhatsApp, its trademarks, or
+anything extracted from its builds.
