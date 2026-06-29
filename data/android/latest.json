@@ -2,8 +2,8 @@
   "platform": "android",
   "schema": 2,
   "package": "com.whatsapp",
-  "version": "2.26.25.77",
-  "versionCode": "262507730",
+  "version": "2.26.25.81",
+  "versionCode": "262508120",
   "strings": [
     "\"%1$s\" cannot be added because the community is full.",
     "\"%1$s\" chats",
