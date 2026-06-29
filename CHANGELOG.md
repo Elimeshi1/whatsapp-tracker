@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-29 16:12 UTC
+
+- mac v26.26.12: 38 new texts, 9 removed — [report](reports/mac/2026-06-29_v26.26.12.md)
+
 ## 2026-06-29 11:25 UTC
 
 - mac v26.25.22: 36 new texts — [report](reports/mac/2026-06-29_v26.25.22.md)
