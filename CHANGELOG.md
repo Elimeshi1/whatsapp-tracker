@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-07-09 15:34 UTC
+
+- mac v26.27.19: 19 new texts, 3 reworded, 6 removed — [report](reports/mac/2026-07-09_v26.27.19.md)
+
 ## 2026-07-07 15:16 UTC
 
 - mac v26.27.15: 7 new texts, 1 reworded, 2 removed — [report](reports/mac/2026-07-07_v26.27.15.md)
