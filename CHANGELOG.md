@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-04 17:04 UTC
+
+- mac v26.31.16: 49 new texts, 2 reworded, 64 removed — [report](reports/mac/2026-08-04_v26.31.16.md)
+
 ## 2026-08-04 11:34 UTC
 
 - mac v26.31.14: 104 new texts, 14 reworded, 54 removed — [report](reports/mac/2026-08-04_v26.31.14.md)
