@@ -2,8 +2,8 @@
   "platform": "android",
   "kind": "methods",
   "schema": 1,
-  "version": "2.26.30.81",
-  "versionCode": "263008130",
+  "version": "2.26.30.98",
+  "versionCode": "263009830",
   "classes": [
     "com.whatsapp.AppShell",
     "com.whatsapp.Conversation",
