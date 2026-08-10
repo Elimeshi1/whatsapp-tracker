@@ -1,8 +1,8 @@
 {
   "platform": "mac",
   "schema": 2,
-  "version": "26.31.23",
-  "build": "1033118008",
+  "version": "26.31.27",
+  "build": "1033956941",
   "strings": [
     "\"%1$@\" reached %2$@ members",
     "\"%1$@\" will no longer be part of the community \"%2$@\". Anyone in this group will still be able find it from their chats to send messages and make calls.",
