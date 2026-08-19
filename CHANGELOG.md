@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-19 21:42 UTC
+
+- android v2.26.32.84: 0 new texts — [report](reports/android/2026-08-19_v2.26.32.84.md)
+
 ## 2026-08-19 13:09 UTC
 
 - mac v26.33.17: 10 new texts, 3 reworded, 5 removed — [report](reports/mac/2026-08-19_v26.33.17.md)
