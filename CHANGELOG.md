@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-03 11:16 UTC
+
+- android v2.26.35.70: 4 new screens, 41 new classes, 142 new texts, 36 reworded, 40 removed — [report](reports/android/2026-09-03_v2.26.35.70.md)
+
 ## 2026-09-01 18:32 UTC
 
 - mac v26.35.12: 48 new texts, 22 reworded, 13 removed — [report](reports/mac/2026-09-01_v26.35.12.md)
