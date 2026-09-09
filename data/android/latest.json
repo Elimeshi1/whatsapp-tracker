@@ -2,8 +2,8 @@
   "platform": "android",
   "schema": 2,
   "package": "com.whatsapp",
-  "version": "2.26.35.71",
-  "versionCode": "263507133",
+  "version": "2.26.35.76",
+  "versionCode": "263507633",
   "strings": [
     "\"%1$s\" can share your response in a new status.",
     "\"%1$s\" can't be added because the community is full.",
