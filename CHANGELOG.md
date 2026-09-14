@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-14 19:51 UTC
+
+- android v2.26.36.73: 0 new texts — [report](reports/android/2026-09-14_v2.26.36.73.md)
+
 ## 2026-09-11 16:29 UTC
 
 - android v2.26.36.71: 1 new texts — [report](reports/android/2026-09-11_v2.26.36.71.md)
