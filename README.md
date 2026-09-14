@@ -75,6 +75,7 @@ Every run that finds changes produces:
 - `CHANGELOG.md` — one line per run, newest first.
 - `data/<platform>/latest.json` — the current baseline (next run diffs against it).
 - `data/<platform>/snapshots/<version>.json` — a per-version archive.
+- `data/<platform>/seen.json` — every text / component / code name ever seen.
 - A Telegram message.
 
 Git history doubles as a full version-by-version archive.
@@ -94,6 +95,22 @@ schedule (every 3h)
 The committed `data/<platform>/latest.json` is the baseline the next run diffs
 against, so git history doubles as a full version-by-version archive.
 
+**Not announcing the same change twice.** Two things would otherwise make a run
+repeat an earlier report:
+
+- *An older build.* The download sources hand us "the current beta", which every
+  so often is an older build than the one already tracked (v2.26.34.82 turned up
+  after v2.26.35.70). Diffing it backwards reports everything the newer build
+  added as *removed*, and rolls the baseline back so the next genuine build
+  re-announces the lot. Builds older than the baseline (by `versionCode` /
+  `build`, else by version number) are skipped and nothing is committed.
+- *Shrinker churn.* WhatsApp's build drops readable classes and methods (and the
+  odd string) from one build and restores them in the next, so a plain baseline
+  diff calls them new again and again — `WaFbHeroPlayer#seekTo` made it into
+  eight separate reports. `data/<platform>/seen.json` remembers everything ever
+  seen; an item that comes back is listed under *Returning*, and returning items
+  alone never trigger a report.
+
 ### Project layout
 
 Each stage is one script; they communicate only through JSON files, so any stage
@@ -109,7 +126,7 @@ can be run and tested on its own.
 | `scripts/extract_mac.py` | extract | `.dmg` → English UI strings |
 | `scripts/diff_and_report.py` | diff | compare each extract vs its baseline → report + `notify.json` |
 | `scripts/notify.py` | notify | render `notify.json` into the Telegram message and send it |
-| `data/<platform>/` | state | committed baselines + per-version snapshots |
+| `data/<platform>/` | state | committed baselines, per-version snapshots, ever-seen ledger |
 | `reports/`, `CHANGELOG.md` | output | human-readable history |
 
 ## Running locally (optional)

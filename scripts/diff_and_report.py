@@ -6,6 +6,17 @@ the new build but not the old one is new UI text (a new-feature hint); a value
 that disappeared was removed. There is no reliable "changed" concept without
 stable keys, so we report Added and Removed only.
 
+Two things stop the same change being announced over and over:
+
+  - a downgrade guard — the download sources hand us "the current beta", which
+    now and then is an *older* build than the one already tracked. Diffing that
+    backwards inverts the report and regresses the baseline, so the next real
+    build re-announces everything. Older builds are skipped instead.
+  - an ever-seen ledger (data/<platform>/seen.json) — WhatsApp's shrinker drops
+    readable classes/methods (and the odd string) from one build and restores
+    them in the next. Anything seen in *any* earlier build is reported as
+    returning, not new, and never triggers a report on its own.
+
 For each platform present under ./incoming this:
   - diffs values against data/<platform>/latest.json
   - writes a Markdown report under reports/<platform>/ when something changed
@@ -29,6 +40,15 @@ DATA = ROOT / "data"
 REPORTS = ROOT / "reports"
 CHANGELOG = ROOT / "CHANGELOG.md"
 
+SEEN_SCHEMA = 1
+SEEN_KEYS = ("texts", "components", "code")
+
+# Buckets that make a run worth reporting. The "returning" buckets ride along in
+# the report when one is written, but never cause one to be written.
+CHANGE_KEYS = ("new", "reworded", "removed", "new_components", "removed_components",
+               "new_permissions", "removed_permissions",
+               "new_classes", "new_methods", "removed_classes")
+
 
 def load_json(path: Path):
     if not path.exists():
@@ -51,6 +71,66 @@ def as_values(strings) -> set:
     if isinstance(strings, list):
         return set(strings)
     return set()
+
+
+def parse_version(v) -> tuple:
+    """Version string -> comparable int tuple ("2.26.36.73" -> (2, 26, 36, 73))."""
+    return tuple(int(n) for n in re.findall(r"\d+", str(v or "")))
+
+
+def build_key(platform: str, data: dict):
+    """(build counter, version tuple) for one extract.
+
+    versionCode (Android) / build (macOS) is WhatsApp's own monotonic counter, so
+    it decides when both sides have one; the dotted version is the fallback.
+    """
+    code = data.get("versionCode") if platform == "android" else data.get("build")
+    code = int(code) if str(code or "").strip().isdigit() else None
+    return code, parse_version(data.get("version"))
+
+
+def is_older_build(platform: str, new_data: dict, old_data: dict) -> bool:
+    """True when the freshly downloaded build predates the committed baseline.
+
+    This happens for real: v2.26.34.82 arrived after v2.26.35.70 had already been
+    tracked. Diffing it backwards reports everything .35.70 added as "removed",
+    and rolls the baseline back to .34.82 — so the next genuine build re-announces
+    that same batch as new. Cheaper to sit the build out.
+    """
+    new_code, new_ver = build_key(platform, new_data)
+    old_code, old_ver = build_key(platform, old_data or {})
+    if new_code is not None and old_code is not None and new_code != old_code:
+        return new_code < old_code
+    return bool(new_ver and old_ver and new_ver < old_ver)
+
+
+def load_seen(platform: str) -> dict:
+    """Every text / component / code name this platform has shown us, ever."""
+    data = load_json(DATA / platform / "seen.json") or {}
+    return {k: set(data.get(k) or []) for k in SEEN_KEYS}
+
+
+def save_seen(platform: str, seen: dict):
+    payload = {"schema": SEEN_SCHEMA}
+    payload.update({k: sorted(seen[k]) for k in SEEN_KEYS})
+    path = DATA / platform / "seen.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def observe(seen: dict, new_data: dict, methods_new: dict):
+    """Fold the build we just processed into the ever-seen ledger."""
+    seen["texts"] |= as_values(new_data.get("strings"))
+    seen["components"] |= as_values(new_data.get("components"))
+    if methods_new:
+        seen["code"] |= set(methods_new.get("classes") or [])
+        seen["code"] |= set(methods_new.get("methods") or [])
+
+
+def split_returning(items, seen_set):
+    """Partition additions into (genuinely new, seen in some earlier build)."""
+    return ([i for i in items if i not in seen_set],
+            [i for i in items if i in seen_set])
 
 
 _TAG = re.compile(r"<[^>]+>")
@@ -259,6 +339,13 @@ def render_report(platform, new_data, prev_version, initial: bool, d: dict) -> s
     section("🧬 New classes / features — code surface", d.get("new_classes", []), cn)
     section("🧬 New methods on existing screens — code surface", d.get("new_methods", []), cn)
     section("➖ Removed classes — code surface", d.get("removed_classes", []), cn)
+
+    # Not new, just back: dropped out of an earlier build and returned. Listed
+    # for completeness, never counted as a finding.
+    section("↩️ Returning texts — already seen in an earlier build",
+            d.get("returning", []), fmt_val)
+    section("↩️ Returning screens / classes / methods — already seen in an earlier build",
+            d.get("returning_code", []), cn)
     return "\n".join(lines)
 
 
@@ -280,6 +367,18 @@ def process_platform(platform: str, extract_path: Path, area_index: dict = None)
               f"({old_data.get('schema')} → {new_data.get('schema')}); resetting baseline")
     initial = old_data is None or schema_changed
     prev_version = (old_data or {}).get("version")
+    version = new_data.get("version") or "unknown"
+
+    # Downgrade guard: diffing an older build against a newer baseline inverts
+    # the report and rolls the baseline back, which makes the *next* real build
+    # re-announce everything. Sit it out and leave every committed file alone.
+    if not initial and is_older_build(platform, new_data, old_data):
+        print(f"== {platform} v{version}: older than baseline v{prev_version} "
+              f"— skipped, baseline left untouched")
+        # Reported (not silently dropped) so a source that permanently regresses
+        # to an older channel is visible instead of looking like a quiet tracker.
+        return {"skipped": True, "platform": platform, "version": version,
+                "baseline": prev_version}
 
     old_set = as_values((old_data or {}).get("strings"))
     new_set = as_values(new_data.get("strings"))
@@ -288,7 +387,6 @@ def process_platform(platform: str, extract_path: Path, area_index: dict = None)
     old_perm = as_values((old_data or {}).get("permissions"))
     new_perm = as_values(new_data.get("permissions"))
 
-    version = new_data.get("version") or "unknown"
     # Pull areas out for labeling, but don't persist them in the committed
     # baseline/snapshot (5k+ entries; only needed transiently for this diff).
     string_areas = new_data.pop("string_areas", None) or {}
@@ -305,31 +403,50 @@ def process_platform(platform: str, extract_path: Path, area_index: dict = None)
         methods_baseline.write_text(
             json.dumps(methods_new, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # Ever-seen ledger. A plain baseline diff calls anything absent from the
+    # previous build "new", but WhatsApp's shrinker keeps dropping and restoring
+    # readable names — WaFbHeroPlayer#seekTo reached eight separate reports that
+    # way. Items seen in any earlier build are split off as "returning".
+    seen = load_seen(platform)
+
     empty_code = {"new_classes": [], "new_methods": [], "removed_classes": []}
     if initial:
         d = {"new": [], "new_groups": [], "reworded": [], "removed": [],
              "new_components": [], "removed_components": [], "new_permissions": [],
-             "removed_permissions": [], **empty_code}
+             "removed_permissions": [], "returning": [], "returning_code": [],
+             **empty_code}
         has_changes = True
     else:
-        new_items, reworded, removed_only = classify_changes(
+        added, reworded, removed_only = classify_changes(
             sorted(new_set - old_set), sorted(old_set - new_set))
+        new_items, returning = split_returning(added, seen["texts"])
+        new_comps, returning_comps = split_returning(
+            sorted(new_comp - old_comp), seen["components"])
         d = {
             "new": new_items,
             "new_groups": group_new_by_area(new_items, string_areas, area_index),
             "reworded": reworded,
             "removed": removed_only,
-            "new_components": sorted(new_comp - old_comp),
+            "new_components": new_comps,
             "removed_components": sorted(old_comp - new_comp),
             "new_permissions": sorted(new_perm - old_perm),
             "removed_permissions": sorted(old_perm - new_perm),
+            "returning": returning,
+            "returning_code": returning_comps,
             **empty_code,
         }
         # Skip code on the feature's first run (no methods baseline yet) — the
         # whole surface would otherwise look "new".
         if code_diff and not code_initial:
-            d.update(code_diff)
-        has_changes = any(d.values())
+            for key in ("new_classes", "new_methods"):
+                d[key], returning_code = split_returning(code_diff[key], seen["code"])
+                d["returning_code"] += returning_code
+            d["removed_classes"] = code_diff["removed_classes"]
+            d["returning_code"].sort()
+        has_changes = any(d[k] for k in CHANGE_KEYS)
+
+    observe(seen, new_data, methods_new)
+    save_seen(platform, seen)
 
     if not has_changes:
         print(f"== {platform} v{version}: no changes")
@@ -415,12 +532,13 @@ def main() -> int:
     if area_index:
         print(f"== cross-platform module index: {len(area_index)} labeled strings")
 
-    results = []
+    results, skipped = [], []
     for platform in ("android", "mac"):
         extract_path = INCOMING / f"{platform}-extract" / f"{platform}-extract.json"
         res = process_platform(platform, extract_path, area_index)
-        if res:
-            results.append(res)
+        if not res:
+            continue
+        (skipped if res.get("skipped") else results).append(res)
 
     changed = bool(results)
     set_output("changed", "true" if changed else "false")
@@ -429,6 +547,9 @@ def main() -> int:
         append_changelog(results)
     else:
         summary = "No changes detected."
+    for r in skipped:
+        summary += (f"\n- {r['platform']} v{r['version']}: older than baseline "
+                    f"v{r['baseline']}, skipped")
     set_output("summary", summary)
 
     (ROOT / "notify.json").write_text(
