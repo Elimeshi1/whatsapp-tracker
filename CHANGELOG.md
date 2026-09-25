@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-25 17:12 UTC
+
+- android v2.26.38.72: 1 new classes, 0 new texts, 1 removed — [report](reports/android/2026-09-25_v2.26.38.72.md)
+
 ## 2026-09-24 11:47 UTC
 
 - android v2.26.38.70: 9 new screens, 93 new classes, 196 new texts, 36 reworded, 63 removed — [report](reports/android/2026-09-24_v2.26.38.70.md)
