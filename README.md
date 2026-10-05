@@ -55,7 +55,7 @@ for very large updates.
 | Platform | Source | What's extracted |
 |----------|--------|------------------|
 | **Android** | WhatsApp's self-hosted APK (or a manual APK URL you pass in) | UI strings, each tagged with the feature module that uses it; manifest components & permissions; readable class & method names (the "code surface") |
-| **macOS** | Official beta endpoint (`.dmg`) | English UI strings from WhatsApp's localization blobs, plus InfoPlist / permission text |
+| **macOS** | Official endpoint (`.dmg`) — newer of the Beta and Release channels, since Beta can stall for weeks | English UI strings from WhatsApp's localization blobs, plus InfoPlist / permission text |
 
 ### Running a specific Android beta
 
@@ -120,7 +120,7 @@ can be run and tested on its own.
 |------|-------|----------------|
 | `.github/workflows/track.yml` | orchestration | the schedule + the three jobs (android, macos, report) |
 | `scripts/download_android.sh` | fetch | download the APK (or a manual `apk_url`) |
-| `scripts/download_mac.sh` | fetch | download the macOS beta `.dmg` |
+| `scripts/download_mac.sh` | fetch | download the newest macOS `.dmg` (Beta or Release, whichever is newer) |
 | `scripts/extract_android.py` | extract | APK → strings (tagged by module), components, permissions |
 | `scripts/extract_methods.py` | extract | APK dex → readable class & method names (the code surface) |
 | `scripts/extract_mac.py` | extract | `.dmg` → English UI strings |
