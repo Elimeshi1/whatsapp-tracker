@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-05 22:02 UTC
+
+- android v2.26.39.75: 5 new texts, 1 reworded, 5 removed — [report](reports/android/2026-10-05_v2.26.39.75.md)
+
 ## 2026-10-02 09:47 UTC
 
 - android v2.26.39.71: 3 new classes, 11 new texts, 3 reworded, 4 removed — [report](reports/android/2026-10-02_v2.26.39.71.md)
