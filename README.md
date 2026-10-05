@@ -2,8 +2,8 @@
 
 Watches the **WhatsApp beta** builds for **Android** and **macOS**, and reports
 what changed between versions. It runs entirely on **GitHub Actions** — no server
-— on a schedule, commits each diff back to the repo, and sends a clean,
-collapsible notification to **Telegram** whenever something changes.
+— on a schedule, commits each diff back to the repo, and sends a clean
+notification to **Telegram** whenever something changes.
 
 Each change is classified so real new features stand out from noise:
 
@@ -39,8 +39,8 @@ If the secrets aren't set, the tracker still records changes in the repo — it
 just sends nothing.
 
 **What a message looks like:** a header and a one-line summary
-(*🧩 new screens · 🧬 new classes · 🆕 new texts · …*), then collapsible
-sections — **closed by default, tap to open**:
+(*🧩 new screens · 🧬 new classes · 🆕 new texts · …*), then the sections —
+**open by default**, so everything is readable without tapping:
 
 - **UI-text changes** first, grouped by feature module (🆕 New, ✏️ Reworded,
   ➖ Removed).

@@ -121,8 +121,8 @@ def short_component(name: str) -> str:
 
 
 def _detail(summary_label: str, items_html: str) -> str:
-    # Always collapsed — no section is open by default.
-    return f"<details><summary><b>{summary_label}</b></summary><ul>{items_html}</ul></details>"
+    # Always expanded — every section is open, no tap needed to read it.
+    return f"<details open><summary><b>{summary_label}</b></summary><ul>{items_html}</ul></details>"
 
 
 # Grammatical / filler words ignored when auto-clustering texts by shared word.
@@ -306,7 +306,7 @@ def _code_sections(run: dict):
 def _renderables(run: dict):
     """The ordered blocks of one message, before pagination.
 
-    Each is ("details", label, items) — a collapsed section — or ("raw", html),
+    Each is ("details", label, items) — an expanded section — or ("raw", html),
     emitted verbatim. Layout: UI-text sections first, then a divider, then the
     code-surface sections.
     """
@@ -340,8 +340,8 @@ def _fit_chunk(items, start, base_len, label, blocks):
 def rich_messages(run: dict, generated: str):
     """Paginate one run into one or more rich HTML docs within Telegram limits.
 
-    A visible header + at-a-glance summary line, then every section as a collapsed
-    <details> (closed by default, tap to open). Sections are split across messages
+    A visible header + at-a-glance summary line, then every section as an open
+    <details> (expanded by default, tap to collapse). Sections are split across messages
     only if one would exceed Telegram's char/block limits; a continued section is
     re-labelled "(cont.)".
     """
@@ -385,11 +385,11 @@ def rich_messages(run: dict, generated: str):
 
 
 def _blockquote_section(label: str, items: list) -> str:
-    """A section as an expandable (collapsed-by-default) blockquote for the
-    plain sendMessage fallback: bold heading + <blockquote expandable> body.
+    """A section as a plain (always expanded) blockquote for the plain
+    sendMessage fallback: bold heading + <blockquote> body.
     Converts the rich <li> rows into bullet lines (sendMessage HTML has no <ul>)."""
     body = "".join(items).replace("<li>", "• ").replace("</li>", "\n").rstrip("\n")
-    return f"<b>{esc_label(label)}</b>\n<blockquote expandable>{body}</blockquote>"
+    return f"<b>{esc_label(label)}</b>\n<blockquote>{body}</blockquote>"
 
 
 def esc_label(label: str) -> str:
@@ -401,8 +401,8 @@ def basic_html(run: dict) -> str:
     """sendMessage-compatible HTML (fallback if sendRichMessage is unavailable).
 
     Same layout as the rich version — summary, UI-text sections, a divider, then
-    code sections — but each section is an expandable blockquote (collapsed by
-    default), which plain sendMessage supports."""
+    code sections — but each section is a plain blockquote (always expanded),
+    which plain sendMessage supports."""
     emoji = PLATFORM_EMOJI.get(run["platform"], "📱")
     prev = f"{esc(str(run['prev_version']))} → " if run.get("prev_version") else ""
     lines = [f"{emoji} <b>WhatsApp {run['platform'].capitalize()} beta</b> "
