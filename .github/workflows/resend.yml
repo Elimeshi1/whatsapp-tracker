@@ -1,0 +1,51 @@
+name: Resend Telegram notification
+
+# Re-sends the notification of an earlier tracker run, rendered with the
+# current notify.py. Useful to preview a change to the message format.
+# Nothing is committed: the run's extracts are diffed against the data as it
+# was when that run started, exactly as the original report job did.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "ID of the 'WhatsApp Beta Tracker' run to resend (from its Actions URL)"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  resend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Restore the data the run was diffed against
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.inputs.run_id }}
+        run: |
+          SHA=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)
+          echo "run $RUN_ID started at $SHA"
+          rm -rf data
+          git checkout "$SHA" -- data
+
+      - name: Collect that run's platform extracts
+        uses: actions/download-artifact@v8
+        with:
+          path: incoming
+          run-id: ${{ github.event.inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Rebuild the notification payload
+        run: python3 scripts/diff_and_report.py
+
+      - name: Notify (Telegram)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 scripts/notify.py
