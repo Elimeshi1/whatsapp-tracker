@@ -38,6 +38,34 @@ To get your chat id, message [@GetChatID_IL_BOT](https://t.me/GetChatID_IL_BOT).
 If the secrets aren't set, the tracker still records changes in the repo — it
 just sends nothing.
 
+## AI feature digest (optional)
+
+Add an `OPENAI_API_KEY` secret and each notification becomes a **feature
+digest**: the changed items grouped into features. Each feature gets a title, a
+verdict — 🧪 new feature in development, ✨ change to an existing feature,
+🗑️ being removed, or 📝 just text — with the reason, a detailed explanation (in
+Hebrew by default), and a collapsed list of every text and code name behind it.
+Optional repository *variables*: `OPENAI_MODEL` (default `gpt-5.6-terra`) and
+`AI_LANGUAGE` (default `Hebrew`).
+
+- **Nothing is missed.** The whole diff goes to the model in one call, so it
+  sees the full picture and keeps each topic in one feature. It answers with
+  item ids only; the code checks that every id was placed, sends skipped ones
+  again in small chunks, and lists anything left under *Unclassified*.
+  Technical noise is shown too, in its own section.
+- **Nothing is announced twice.** `data/ai/ledger.json` records every feature
+  announced and every item reported under it. Items already reported (e.g. an
+  Android string that later reaches Mac) never go to the model again — they show
+  up as *now on another platform*. New details of a known feature come back as
+  an 🔄 update to it, not a new feature.
+- **Tokens.** Only the diff is sent, compacted; Android + Mac copies of the
+  same text are sent once; the answer is ids plus the explanations, not the
+  texts. Replaying 10 past runs: ~10k tokens for a small build, ~25–45k for a
+  large one, ~37k in / 14k out for the largest diff so far (1,337 Mac items).
+  About 9k of each call is the list of recently announced features.
+
+Without the secret, or if the API call fails, the plain diff is sent as before.
+
 **What a message looks like:** a header and a one-line summary
 (*🧩 new screens · 🧬 new classes · 🆕 new texts · …*), then the sections —
 **open by default**, so everything is readable without tapping:
@@ -125,6 +153,7 @@ can be run and tested on its own.
 | `scripts/extract_methods.py` | extract | APK dex → readable class & method names (the code surface) |
 | `scripts/extract_mac.py` | extract | `.dmg` → English UI strings |
 | `scripts/diff_and_report.py` | diff | compare each extract vs its baseline → report + `notify.json` |
+| `scripts/ai_digest.py` | analyse | group the diff into features with OpenAI → `notify.json` + `data/ai/ledger.json` |
 | `scripts/notify.py` | notify | render `notify.json` into the Telegram message and send it |
 | `data/<platform>/` | state | committed baselines, per-version snapshots, ever-seen ledger |
 | `reports/`, `CHANGELOG.md` | output | human-readable history |

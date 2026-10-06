@@ -13,3 +13,6 @@ __pycache__/
 # local demo/scratch (large APK bundles)
 demo/
 *.xapk
+
+# local secrets
+.env

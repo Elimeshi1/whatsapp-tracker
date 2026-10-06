@@ -3,7 +3,8 @@
 
 Reads notify.json (produced by diff_and_report.py) and, for each platform that
 changed, sends a clear message showing exactly what was added / changed /
-removed — the whole diff inline.
+removed — the whole diff inline. When ai_digest.py added an "ai" digest, one
+message grouped by feature is sent instead (same items, AI titles/summaries).
 
 Enabled purely by presence of secrets (set as env vars):
 
@@ -120,9 +121,10 @@ def short_component(name: str) -> str:
     return name
 
 
-def _detail(summary_label: str, items_html: str) -> str:
-    # Always expanded — every section is open, no tap needed to read it.
-    return f"<details open><summary><b>{summary_label}</b></summary><ul>{items_html}</ul></details>"
+def _detail(summary_label: str, items_html: str, open_: bool = True) -> str:
+    # Plain-diff sections are expanded; the AI digest's item lists start closed.
+    attr = " open" if open_ else ""
+    return f"<details{attr}><summary><b>{summary_label}</b></summary><ul>{items_html}</ul></details>"
 
 
 # Grammatical / filler words ignored when auto-clustering texts by shared word.
@@ -306,8 +308,8 @@ def _code_sections(run: dict):
 def _renderables(run: dict):
     """The ordered blocks of one message, before pagination.
 
-    Each is ("details", label, items) — an expanded section — or ("raw", html),
-    emitted verbatim. Layout: UI-text sections first, then a divider, then the
+    Each is ("details", label, items) — an expanded section — ("closed", label,
+    items) — a collapsed one — or ("raw", html), emitted verbatim. Layout: UI-text sections first, then a divider, then the
     code-surface sections.
     """
     blocks = [("details", lbl, items) for lbl, items in _string_sections(run)]
@@ -351,7 +353,11 @@ def rich_messages(run: dict, generated: str):
 
     header = _run_header(run) + "<hr/>" + _summary_line(run)
     footer = f"<footer>WhatsApp beta tracker · {esc(generated)}</footer>" if generated else ""
+    return paginate(header, _renderables(run), footer)
 
+
+def paginate(header: str, renderables, footer: str):
+    """Split a header + ordered blocks into rich HTML docs within Telegram limits."""
     messages = []
     cur, blocks = header, 4
 
@@ -360,7 +366,7 @@ def rich_messages(run: dict, generated: str):
         messages.append(cur + footer)
         cur, blocks = "", 0
 
-    for kind, *rest in _renderables(run):
+    for kind, *rest in renderables:
         if kind == "raw":
             html = rest[0]
             if len(cur) + len(html) + len(footer) + 80 > RICH_CHAR_BUDGET:
@@ -369,6 +375,7 @@ def rich_messages(run: dict, generated: str):
             blocks += 1
             continue
         label, items = rest
+        open_ = kind == "details"           # "closed" → collapsed <details>
         idx, first = 0, True
         while idx < len(items):
             base = len(cur) + len(footer) + 80
@@ -376,12 +383,109 @@ def rich_messages(run: dict, generated: str):
             if not chunk:                       # message full → flush and retry
                 flush()
                 continue
-            cur += _detail(label if first else f"{label} (cont.)", "".join(chunk))
+            cur += _detail(label if first else f"{label} (cont.)", "".join(chunk), open_)
             blocks += len(chunk) + 2
             first = False
     if cur:
         flush()
     return messages or [header + footer]
+
+
+# -------------------------------------------------------------- AI digest ---
+# When ai_digest.py ran, notify.json carries an "ai" digest: the same changed
+# items, grouped into features with a title and summary. It is sent as one
+# message for all platforms (Android + Mac items with the same text appear once).
+# Every item of the diff is rendered under some heading — features, platform
+# arrivals, technical/minor, or unclassified — so nothing is left out.
+
+KIND_ICON = {"t": "🆕", "w": "✏️", "r": "➖", "c": "🧩", "x": "➖🧩", "p": "🔐",
+             "q": "➖🔐", "k": "🧬", "m": "🧬", "d": "➖🧬"}
+IMPORTANCE_ICON = {"high": "🔥 ", "medium": "", "low": ""}
+STATUS_BADGE = {
+    "new_unreleased": "🧪 פיצ'ר חדש בפיתוח",
+    "existing_change": "✨ שינוי בפיצ'ר שכבר קיים",
+    "removal": "🗑️ פיצ'ר שמוסר / מוחלף",
+    "text_only": "📝 רק טקסט — לא נראה כמו פיצ'ר אמיתי",
+}
+
+
+def _ai_item(it: dict, multi: bool) -> str:
+    icon = KIND_ICON.get(it["kind"], "•")
+    plats = ""
+    if multi:
+        plats = " " + "".join(PLATFORM_EMOJI.get(p, "") for p in it.get("platforms", []))
+    v = it["value"]
+    if it["kind"] == "w":
+        body = reword_html(v[0], v[1])
+    elif it["kind"] in ("t", "r"):
+        body = esc(trunc(plain(v), 260))
+    else:
+        body = f"<code>{esc(v)}</code>"
+    return f"<li>{icon}{plats} {body}</li>"
+
+
+def _report_links(runs) -> str:
+    base = os.environ.get("GITHUB_SERVER_URL", "") + "/" + os.environ.get("GITHUB_REPOSITORY", "")
+    ref = os.environ.get("GITHUB_REF_NAME", "main")
+    if not os.environ.get("GITHUB_REPOSITORY"):
+        return ""
+    links = [f'<a href="{base}/blob/{ref}/{r["report"]}">{esc(r["platform"].capitalize())} full report</a>'
+             for r in runs if r.get("report")]
+    return "<p>" + " · ".join(links) + "</p>" if links else ""
+
+
+def digest_messages(payload: dict):
+    ai, runs = payload["ai"], payload["runs"]
+    multi = len(runs) > 1
+    head = []
+    for r in runs:
+        emoji = PLATFORM_EMOJI.get(r["platform"], "📱")
+        prev = f"{esc(str(r['prev_version']))} → " if r.get("prev_version") else ""
+        head.append(f"{emoji} {esc(r['platform'].capitalize())} {prev}<b>{esc(str(r['version']))}</b>")
+    feats = ai.get("features", [])
+    n_new = sum(1 for f in feats if not f["update"])
+    n_dev = sum(1 for f in feats if f.get("status") == "new_unreleased")
+    summary = [f"🧪 <b>{n_dev} בפיתוח</b>", f"✨ {n_new} נושאים חדשים"]
+    if len(feats) - n_new:
+        summary.append(f"🔄 {len(feats) - n_new} עדכונים לפיצ'רים קיימים")
+    if ai.get("platform_arrivals"):
+        summary.append(f"📲 {len(ai['platform_arrivals'])} הגיעו לפלטפורמה נוספת")
+    header = ("<h3>🤖 WhatsApp beta — מה חדש</h3><p>" + "<br/>".join(head) + "</p><hr/>"
+              + "<p>" + "  ·  ".join(summary) + "</p>")
+
+    # Per feature: title, the explanation (always visible), then its texts and
+    # code names in a collapsed section — tap to see exactly what was found.
+    blocks = []
+    for n, f in enumerate(feats):
+        tag = IMPORTANCE_ICON.get(f["importance"], "") + ("🔄 עדכון: " if f["update"] else "")
+        if n:
+            blocks.append(("raw", "<hr/>"))
+        badge = STATUS_BADGE.get(f.get("status"), "")
+        why = f" — <i>{esc(f['status_reason'])}</i>" if f.get("status_reason") else ""
+        blocks.append(("raw", f"<h3>{tag}{esc(f['title'])}</h3>"
+                              + (f"<p><b>{badge}</b>{why}</p>" if badge else "")
+                              + f"<p>{esc(f['summary'])}</p>"))
+        blocks.append(("closed", f"📝 הטקסטים והקוד ({len(f['items'])})",
+                       [_ai_item(i, multi) for i in f["items"]]))
+    arrivals = ai.get("platform_arrivals") or []
+    if arrivals or ai.get("unclassified") or ai.get("noise"):
+        blocks.append(("raw", "<hr/>"))
+    if arrivals:
+        items = [f"<li>{''.join(PLATFORM_EMOJI.get(p, '') for p in a['platforms'])} "
+                 f"{esc(a['title'])} ({a['count']})</li>" for a in arrivals]
+        blocks.append(("closed", f"📲 דווחו בעבר — עכשיו גם בפלטפורמה נוספת ({len(arrivals)})", items))
+    if ai.get("unclassified"):
+        blocks.append(("closed", f"❓ לא מסווג ({len(ai['unclassified'])})",
+                       [_ai_item(i, multi) for i in ai["unclassified"]]))
+    if ai.get("noise"):
+        blocks.append(("closed", f"🔧 שינויים טכניים / קטנים ({len(ai['noise'])})",
+                       [_ai_item(i, multi) for i in ai["noise"]]))
+    links = _report_links(runs)
+    if links:
+        blocks.append(("raw", links))
+    generated = payload.get("generated", "")
+    footer = f"<footer>WhatsApp beta tracker · {esc(generated)}</footer>" if generated else ""
+    return paginate(header, blocks, footer)
 
 
 def _blockquote_section(label: str, items: list) -> str:
@@ -464,6 +568,31 @@ def send_telegram(payload: dict):
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "DRY")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "DRY")
     generated = payload.get("generated", "")
+    ai = payload.get("ai")
+    if ai and not (ai.get("features") or ai.get("platform_arrivals")
+                   or ai.get("unclassified") or ai.get("noise")):
+        # Everything in this diff was already announced in an earlier run.
+        print("Telegram: nothing new since the last announcement — not sent")
+        return
+    if ai:
+        docs = digest_messages(payload)
+        if DRY:
+            for i, doc in enumerate(docs, 1):
+                print(f"\n----- TELEGRAM AI digest {i}/{len(docs)} -----\n{doc}")
+            print("Telegram: dry-run rendered")
+            return
+        sent = 0
+        try:
+            for doc in docs:
+                tg_send_rich(token, chat_id, doc)
+                sent += 1
+            print("Telegram: AI digest sent")
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"notify: AI digest send failed ({exc})", file=sys.stderr)
+            if sent:          # part of it went out — don't follow with a duplicate
+                return
+            print("notify: sending plain diff instead", file=sys.stderr)
     for run in payload["runs"]:
         docs = rich_messages(run, generated)
         if DRY:

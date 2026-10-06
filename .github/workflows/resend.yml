@@ -44,6 +44,14 @@ jobs:
       - name: Rebuild the notification payload
         run: python3 scripts/diff_and_report.py
 
+      - name: AI feature digest
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.6-terra' }}
+          AI_LANGUAGE: ${{ vars.AI_LANGUAGE || 'Hebrew' }}
+        run: python3 scripts/ai_digest.py
+
       - name: Notify (Telegram)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
