@@ -73,6 +73,15 @@ def as_values(strings) -> set:
     return set()
 
 
+_RES_REF = re.compile(r"^@[\w:]+/\S+$")
+
+
+def text_values(strings) -> set:
+    """as_values for UI strings, minus resource aliases (@string/…) that older
+    extracts kept: they aren't displayed text and only showed up as rewords."""
+    return {v for v in as_values(strings) if not _RES_REF.match(v)}
+
+
 def parse_version(v) -> tuple:
     """Version string -> comparable int tuple ("2.26.36.73" -> (2, 26, 36, 73))."""
     return tuple(int(n) for n in re.findall(r"\d+", str(v or "")))
@@ -147,6 +156,36 @@ def _norm(s: str) -> str:
     return _WS.sub(" ", s).strip()
 
 
+# Words that make up the generic templates WhatsApp builds many strings from
+# ("Couldn't load …", "Enter a valid …", "… not available"). Two strings that
+# share only these words are different strings, not a reword of one another.
+_TEMPLATE_WORDS = set("""a an the to of for and or in on is are be your you this that it its
+with from at by as t s couldn could can cannot not unable failed load loading enter valid
+delete remove add edit save send try again please no new more available unavailable there
+was were has have been will set up turn off on get see view open close select continue
+done something went wrong number""".split())
+
+
+def _same_string(na: str, nr: str) -> bool:
+    """False when a candidate reword just swaps the subject of a shared template.
+
+    "Couldn't load avatar" → "Couldn't load activity" or "Enter a valid
+    expiration" → "Enter a valid web address" are new texts, not rewordings:
+    a real word was replaced on both sides and all the two share is template
+    words. Look-alike words ("expiry"/"expiration", "could"/"couldn") don't
+    count as replaced.
+    """
+    a, r = set(na.split()), set(nr.split())
+    gone, came = r - a, a - r
+    for w in list(gone):
+        twin = next((v for v in came if v[:4] == w[:4] and len(w) >= 4 and len(v) >= 4), None)
+        if twin:
+            gone.discard(w)
+            came.discard(twin)
+    swapped = gone and came and (gone | came) - _TEMPLATE_WORDS
+    return not swapped or not (a & r) <= _TEMPLATE_WORDS
+
+
 def classify_changes(added, removed):
     """Split a raw added/removed value diff into three buckets:
 
@@ -158,7 +197,8 @@ def classify_changes(added, removed):
 
     A pair counts as a reword when the normalized strings are very similar
     (ratio ≥ 0.85) or fairly similar with strong word overlap (ratio ≥ 0.6 and
-    Jaccard ≥ 0.5). Greedy best-match; each removed value is used at most once.
+    Jaccard ≥ 0.5), unless all they share is a generic template (see
+    _same_string). Greedy best-match; each removed value is used at most once.
     """
     rem = [(r, _norm(r), set(_norm(r).split())) for r in removed]
     used = set()
@@ -176,7 +216,8 @@ def classify_changes(added, removed):
                 if jac < 0.3 and abs(len(na) - len(nr)) > 0.4 * max(len(na), len(nr)):
                     continue
                 ratio = difflib.SequenceMatcher(None, na, nr).ratio()
-                if (ratio >= 0.85 or (ratio >= 0.6 and jac >= 0.5)) and ratio > best_ratio:
+                if ((ratio >= 0.85 or (ratio >= 0.6 and jac >= 0.5)) and ratio > best_ratio
+                        and _same_string(na, nr)):
                     best, best_ratio = i, ratio
         if best is not None:
             used.add(best)
@@ -380,8 +421,8 @@ def process_platform(platform: str, extract_path: Path, area_index: dict = None)
         return {"skipped": True, "platform": platform, "version": version,
                 "baseline": prev_version}
 
-    old_set = as_values((old_data or {}).get("strings"))
-    new_set = as_values(new_data.get("strings"))
+    old_set = text_values((old_data or {}).get("strings"))
+    new_set = text_values(new_data.get("strings"))
     old_comp = as_values((old_data or {}).get("components"))
     new_comp = as_values(new_data.get("components"))
     old_perm = as_values((old_data or {}).get("permissions"))

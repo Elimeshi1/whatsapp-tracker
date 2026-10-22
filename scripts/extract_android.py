@@ -37,6 +37,9 @@ from pathlib import Path
 
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 RES_ID = re.compile(r"0x7f[0-9a-f]{6}")
+# A value that only points at another resource (@string/APKTOOL_DUMMYVAL_…) is
+# an alias, not displayed text.
+RES_REF = re.compile(r"^@[\w:]+/\S+$")
 # Generic second-level segments that don't add meaning as a label on their own.
 _GENERIC_SEG = {"ui", "product", "app", "view", "views", "impl", "base", "core",
                 "common", "data", "model", "models", "fragment", "fragments",
@@ -76,7 +79,7 @@ def collect_values(path: Path):
         return vals, id2val
     for el in root.findall("string"):
         text = clean("".join(el.itertext()))
-        if len(text) >= 2 and has_letter(text):
+        if len(text) >= 2 and has_letter(text) and not RES_REF.match(text):
             vals.add(text)
             m = RES_ID.search(el.get("name") or "")
             if m:
