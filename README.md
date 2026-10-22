@@ -43,8 +43,11 @@ just sends nothing.
 Add an `OPENAI_API_KEY` secret and each notification becomes a **feature
 digest**: the changed items grouped into features. Each feature gets a title, a
 verdict — 🧪 new feature in development, ✨ change to an existing feature,
-🗑️ being removed, or 📝 just text — with the reason, a detailed explanation (in
+🗑️ being removed, or 📝 just text — with the reason, a short explanation (in
 Hebrew by default), and a collapsed list of every text and code name behind it.
+Only new topics get the full write-up. Updates to features announced before get
+one line on what's new in this build, and minor / text-only topics go into one
+collapsed list, so the message stays short to read.
 Optional repository *variables*: `OPENAI_MODEL` (default `gpt-5.6-terra`) and
 `AI_LANGUAGE` (default `Hebrew`).
 

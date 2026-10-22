@@ -95,24 +95,35 @@ Rules:
   screens, classes, methods, UI texts, rewordings and removals all go together,
   even when they are far apart in the list. Before answering, check that no two
   of your features describe the same thing; merge them if they do.
+- One feature = ONE capability. Never build an umbrella feature ("more options
+  for messages, stickers and the media editor"): two different capabilities in
+  the same area are two features (sticker sounds and sticker styles are two).
 - If items belong to a feature in KNOWN FEATURES, set "ref" to its id and
   "ref_title" to its exact title (both are checked): the items are new details
-  of something already announced. Only link when it is truly the same feature.
+  of something already announced. Link only when the items extend the SAME
+  capability that known feature's description is about. A new capability in
+  the same area (a new option, a new screen, a new flow) is a new feature, not
+  an update, even if a broad known feature roughly covers the area.
   Otherwise "ref" and "ref_title" are "".
 - "items" must list EVERY id of the feature — the answer is checked
   automatically and anything left out is flagged.
 - "noise": ONLY items with no product meaning at all — refactors, generic/infra
-  code, analytics, generic errors and plurals, typo-level wording fixes. Any
-  item hinting at something a user could see or do belongs to a feature; when
-  unsure, make it a low-importance feature rather than noise.
+  code (lifecycle methods like onResume/onDestroy, design-system widgets,
+  loggers), analytics, generic one-word labels, generic errors and plurals,
+  typo-level wording fixes. Any UI sentence that tells the user about something
+  they could see or do, and any removed text or class that shows something
+  being dropped or moved, belongs to a feature; when unsure, make it a
+  low-importance feature rather than noise. Noise is never shown again, so a
+  real feature put there is lost for good.
 - "title": a clear, specific feature name (not generic like "chat improvements").
-- "summary": a detailed explanation, 2-5 sentences, for someone who has not
-  seen the texts: what the feature is, how it works for the user (where it
-  appears, what they can do, options, limits, who can use it), and anything
-  notable the texts reveal (e.g. a feature being removed or replaced, a new
-  setting, a privacy aspect, a specific country). For a "ref" update, explain
-  what is new about the known feature in this build. Base everything on the
-  items; don't invent details they don't support.
+- "summary": short and to the point — the reader gets dozens of these.
+    new feature: 1-3 sentences for someone who has not seen the texts: what it
+      is and how it works for the user (where it appears, what they can do,
+      options, limits, who can use it), plus anything notable the texts reveal
+      (a removal, a new setting, a privacy aspect, a specific country).
+    "ref" update: ONE sentence saying only what is new in THIS build. Do not
+      explain the known feature again — the reader already knows it.
+  Base everything on the items; don't invent details they don't support.
 - "status": what this really is, using what you know about WhatsApp as it is
   publicly available today plus the evidence in the items:
     "new_unreleased" — a genuinely new feature, still in development and not yet
@@ -124,7 +135,7 @@ Rules:
     "text_only"      — only text: rewording, strings that come and go between
                        builds, generic/duplicated strings, or a few lines with no
                        real feature behind them
-- "status_reason": one sentence on why you chose that status (what in the items
+- "status_reason": a few words on why you chose that status (what in the items
   or in WhatsApp's current app supports it). Be honest when unsure.
 - "importance": high = new user-facing feature, medium = notable change to an
   existing one, low = minor.
@@ -376,10 +387,10 @@ RETRY_CHUNK = 200         # items per follow-up call for ids the model skipped
 RETRY_ROUNDS = 3
 
 RETRY_NOTE = """These items were left out of the analysis of this build. Assign
-each to the feature it belongs to. Strongly prefer the features in KNOWN FEATURES
-(those with N ids were found in this same build): set "ref" to that id and
-"ref_title" to its title. Create a new feature only for a topic none of them
-covers."""
+each to the feature it belongs to. When one of KNOWN FEATURES (those with N ids
+were found in this same build) is about the same capability, set "ref" to its id
+and "ref_title" to its title; otherwise create a new feature. Same rules as
+before: no umbrella features, noise only for items with no product meaning."""
 
 
 def classify(items: dict, ledger: dict) -> tuple:

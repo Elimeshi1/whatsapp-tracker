@@ -434,6 +434,16 @@ def _report_links(runs) -> str:
     return "<p>" + " · ".join(links) + "</p>" if links else ""
 
 
+def _digest_tier(f: dict) -> str:
+    """Where a feature goes in the message: the full write-up is kept for new
+    topics that matter; updates to known features and minor items are short."""
+    if f["update"]:
+        return "update"
+    if f.get("status") == "text_only" or f.get("importance") == "low":
+        return "minor"
+    return "new"
+
+
 def digest_messages(payload: dict):
     ai, runs = payload["ai"], payload["runs"]
     multi = len(runs) > 1
@@ -443,32 +453,56 @@ def digest_messages(payload: dict):
         prev = f"{esc(str(r['prev_version']))} → " if r.get("prev_version") else ""
         head.append(f"{emoji} {esc(r['platform'].capitalize())} {prev}<b>{esc(str(r['version']))}</b>")
     feats = ai.get("features", [])
-    n_new = sum(1 for f in feats if not f["update"])
-    n_dev = sum(1 for f in feats if f.get("status") == "new_unreleased")
-    summary = [f"🧪 <b>{n_dev} בפיתוח</b>", f"✨ {n_new} נושאים חדשים"]
-    if len(feats) - n_new:
-        summary.append(f"🔄 {len(feats) - n_new} עדכונים לפיצ'רים קיימים")
+    rank = {"high": 0, "medium": 1, "low": 2}
+    srank = {"new_unreleased": 0, "existing_change": 1, "removal": 2, "text_only": 3}
+    tiers = {"new": [], "update": [], "minor": []}
+    for f in sorted(feats, key=lambda f: (rank.get(f["importance"], 3),
+                                          srank.get(f.get("status"), 4))):
+        tiers[_digest_tier(f)].append(f)
+    n_dev = sum(1 for f in tiers["new"] if f.get("status") == "new_unreleased")
+    summary = [f"🧪 <b>{n_dev} בפיתוח</b>"]
+    if len(tiers["new"]) - n_dev:
+        summary.append(f"✨ {len(tiers['new']) - n_dev} שינויים")
+    if tiers["update"]:
+        summary.append(f"🔄 {len(tiers['update'])} עדכונים")
+    if tiers["minor"]:
+        summary.append(f"📝 {len(tiers['minor'])} קטנים")
     if ai.get("platform_arrivals"):
-        summary.append(f"📲 {len(ai['platform_arrivals'])} הגיעו לפלטפורמה נוספת")
+        summary.append(f"📲 {len(ai['platform_arrivals'])} בפלטפורמה נוספת")
     header = ("<h3>🤖 WhatsApp beta — מה חדש</h3><p>" + "<br/>".join(head) + "</p><hr/>"
               + "<p>" + "  ·  ".join(summary) + "</p>")
 
-    # Per feature: title, the explanation (always visible), then its texts and
-    # code names in a collapsed section — tap to see exactly what was found.
     blocks = []
-    for n, f in enumerate(feats):
-        tag = IMPORTANCE_ICON.get(f["importance"], "") + ("🔄 עדכון: " if f["update"] else "")
+    # New topics: title, verdict, the explanation (always visible), then its
+    # texts and code names collapsed — tap to see exactly what was found.
+    for n, f in enumerate(tiers["new"]):
         if n:
             blocks.append(("raw", "<hr/>"))
         badge = STATUS_BADGE.get(f.get("status"), "")
         why = f" — <i>{esc(f['status_reason'])}</i>" if f.get("status_reason") else ""
-        blocks.append(("raw", f"<h3>{tag}{esc(f['title'])}</h3>"
+        blocks.append(("raw", f"<h3>{IMPORTANCE_ICON.get(f['importance'], '')}{esc(f['title'])}</h3>"
                               + (f"<p><b>{badge}</b>{why}</p>" if badge else "")
                               + f"<p>{esc(f['summary'])}</p>"))
         blocks.append(("closed", f"📝 הטקסטים והקוד ({len(f['items'])})",
                        [_ai_item(i, multi) for i in f["items"]]))
+    # Known features: they were explained when first announced, so only the
+    # one-line "what's new" is shown, the items stay one tap away.
+    if tiers["update"]:
+        blocks.append(("raw", "<hr/><h3>🔄 עדכונים לפיצ'רים שכבר דווחו</h3>"))
+        for f in tiers["update"]:
+            blocks.append(("raw", f"<p><b>{esc(f['title'])}</b> — {esc(f['summary'])}</p>"))
+            blocks.append(("closed", f"📝 הטקסטים והקוד ({len(f['items'])})",
+                           [_ai_item(i, multi) for i in f["items"]]))
+    # Minor topics: one collapsed list, each title with its items under it.
+    if tiers["minor"]:
+        rows = []
+        for f in tiers["minor"]:
+            rows.append(f"<li><b>{esc(f['title'])}</b> — {esc(f['summary'])}</li>")
+            rows += [_ai_item(i, multi).replace("<li>", "<li>   ↳ ", 1) for i in f["items"]]
+        blocks.append(("raw", "<hr/>"))
+        blocks.append(("closed", f"📝 שינויים קטנים / רק טקסט ({len(tiers['minor'])})", rows))
     arrivals = ai.get("platform_arrivals") or []
-    if arrivals or ai.get("unclassified") or ai.get("noise"):
+    if (arrivals or ai.get("unclassified") or ai.get("noise")) and not tiers["minor"]:
         blocks.append(("raw", "<hr/>"))
     if arrivals:
         items = [f"<li>{''.join(PLATFORM_EMOJI.get(p, '') for p in a['platforms'])} "
