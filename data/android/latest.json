@@ -1055,7 +1055,6 @@
     "<font face=sans-serif-medium>Never share SMS codes from WhatsApp</font><br/><font color=#%s>with anyone. The codes help keep your account in your control.</font>",
     "<font face=sans-serif-medium>Someone tried to register the number</font><br/><font color=#%1$s>%2$s to WhatsApp on another phone.</font>",
     "<font face=sans-serif-medium>Someone tried to register your account</font><br/><font color=#%1$s>to WhatsApp on another phone.</font>",
-    "@string/APKTOOL_DUMMYVAL_0x7f12166f",
     "A Dispute Settlement Body must be certified. To submit a dispute, go to the website of the one you choose. <a href=\"%1$s\">See options</a>",
     "A Google feature you turned on may view your messages. <a href=\"%1$s\">Learn more</a>",
     "A SIM on this device",
