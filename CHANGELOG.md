@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-26 20:30 UTC
+
+- android v2.26.42.75: 2 new classes, 0 new texts — [report](reports/android/2026-10-26_v2.26.42.75.md)
+
 ## 2026-10-23 11:40 UTC
 
 - android v2.26.42.71: 2 new classes, 5 new texts, 2 reworded, 1 removed — [report](reports/android/2026-10-23_v2.26.42.71.md)
