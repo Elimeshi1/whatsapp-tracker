@@ -2,8 +2,8 @@
   "platform": "android",
   "schema": 2,
   "package": "com.whatsapp",
-  "version": "2.26.44.70",
-  "versionCode": "264407038",
+  "version": "2.26.44.71",
+  "versionCode": "264407138",
   "strings": [
     "\"%1$s\" admins turned on admin approvals to join the community.\n\nYou review people new to the community who join through this group.",
     "\"%1$s\" can share your response in a new status.",
