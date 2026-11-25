@@ -21,6 +21,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -119,6 +120,15 @@ def short_component(name: str) -> str:
         if name.startswith(p):
             return name[len(p):].lstrip(".")
     return name
+
+
+# Block-level elements as Telegram counts them toward the 500-block limit.
+_BLOCK_RE = re.compile(r"<(?:h[1-6]|p|hr|details|summary|ul|ol|li|blockquote|pre|footer)\b")
+
+
+def nblocks(html: str) -> int:
+    """How many blocks a piece of rich HTML uses (counted, not estimated)."""
+    return len(_BLOCK_RE.findall(html))
 
 
 def _detail(summary_label: str, items_html: str, open_: bool = True) -> str:
@@ -327,14 +337,16 @@ def _fit_chunk(items, start, base_len, label, blocks):
     the per-message character budget or the block-count budget. An empty chunk
     means not even one more item fits — the caller should flush and retry.
     """
-    chunk, clen, idx = [], len(label) + 40, start
+    chunk, clen, cblocks, idx = [], len(label) + 40, 3, start   # details+summary+ul
     while idx < len(items):
         item = items[idx]
+        ib = nblocks(item)
         if (base_len + clen + len(item) > RICH_CHAR_BUDGET
-                or blocks + len(chunk) + 2 > RICH_BLOCK_BUDGET):
+                or blocks + cblocks + ib > RICH_BLOCK_BUDGET):
             break
         chunk.append(item)
         clen += len(item)
+        cblocks += ib
         idx += 1
     return chunk, idx
 
@@ -359,20 +371,22 @@ def rich_messages(run: dict, generated: str):
 def paginate(header: str, renderables, footer: str):
     """Split a header + ordered blocks into rich HTML docs within Telegram limits."""
     messages = []
-    cur, blocks = header, 4
+    fb = nblocks(footer)
+    cur, blocks = header, nblocks(header) + fb
 
     def flush():
         nonlocal cur, blocks
         messages.append(cur + footer)
-        cur, blocks = "", 0
+        cur, blocks = "", fb
 
     for kind, *rest in renderables:
         if kind == "raw":
             html = rest[0]
-            if len(cur) + len(html) + len(footer) + 80 > RICH_CHAR_BUDGET:
+            if cur and (len(cur) + len(html) + len(footer) + 80 > RICH_CHAR_BUDGET
+                        or blocks + nblocks(html) > RICH_BLOCK_BUDGET):
                 flush()
             cur += html
-            blocks += 1
+            blocks += nblocks(html)
             continue
         label, items = rest
         open_ = kind == "details"           # "closed" → collapsed <details>
@@ -383,8 +397,9 @@ def paginate(header: str, renderables, footer: str):
             if not chunk:                       # message full → flush and retry
                 flush()
                 continue
-            cur += _detail(label if first else f"{label} (cont.)", "".join(chunk), open_)
-            blocks += len(chunk) + 2
+            part = _detail(label if first else f"{label} (cont.)", "".join(chunk), open_)
+            cur += part
+            blocks += nblocks(part)
             first = False
     if cur:
         flush()
@@ -576,8 +591,16 @@ def basic_html(run: dict) -> str:
 def tg_post(token: str, method: str, data: bytes, headers: dict):
     url = TG_API.format(token=token, method=method)
     req = urllib.request.Request(url, data=data, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        # Surface Telegram's own reason ("too many blocks", "can't parse …").
+        try:
+            why = json.loads(exc.read().decode()).get("description", "")
+        except Exception:  # noqa: BLE001
+            why = ""
+        raise RuntimeError(f"Telegram {method} HTTP {exc.code}: {why or exc.reason}") from exc
 
 
 def tg_send_rich(token: str, chat_id: str, html_doc: str):
@@ -615,18 +638,25 @@ def send_telegram(payload: dict):
                 print(f"\n----- TELEGRAM AI digest {i}/{len(docs)} -----\n{doc}")
             print("Telegram: dry-run rendered")
             return
-        sent = 0
-        try:
-            for doc in docs:
-                tg_send_rich(token, chat_id, doc)
-                sent += 1
-            print("Telegram: AI digest sent")
-            return
-        except Exception as exc:  # noqa: BLE001
-            print(f"notify: AI digest send failed ({exc})", file=sys.stderr)
-            if sent:          # part of it went out — don't follow with a duplicate
+        global RICH_CHAR_BUDGET, RICH_BLOCK_BUDGET
+        for attempt in range(2):
+            sent = 0
+            try:
+                for doc in docs:
+                    tg_send_rich(token, chat_id, doc)
+                    sent += 1
+                print("Telegram: AI digest sent")
                 return
-            print("notify: sending plain diff instead", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                print(f"notify: AI digest send failed ({exc})", file=sys.stderr)
+                if sent:      # part of it went out — don't follow with a duplicate
+                    return
+            if attempt == 0:  # retry once as more, smaller messages
+                RICH_CHAR_BUDGET, RICH_BLOCK_BUDGET = RICH_CHAR_BUDGET // 2, RICH_BLOCK_BUDGET // 2
+                docs = digest_messages(payload)
+                print(f"notify: retrying the AI digest as {len(docs)} smaller message(s)",
+                      file=sys.stderr)
+        print("notify: sending plain diff instead", file=sys.stderr)
     for run in payload["runs"]:
         docs = rich_messages(run, generated)
         if DRY:
