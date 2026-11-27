@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-27 12:21 UTC
+
+- android v2.26.47.72: 1 new classes, 0 new texts — [report](reports/android/2026-11-27_v2.26.47.72.md)
+- mac v26.48.12: 155 new texts, 1 reworded — [report](reports/mac/2026-11-27_v26.48.12.md)
+
 ## 2026-11-26 16:55 UTC
 
 - android v2.26.47.71: 7 new classes, 14 new texts — [report](reports/android/2026-11-26_v2.26.47.71.md)
